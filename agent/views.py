@@ -10,10 +10,12 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from orders.models import Order, OrderItem, Refund
+from orders.models import InvalidTransition, Order, OrderItem, Refund
+from orders.verdict import Verdict
 from shop.models import Product
 
 from .scenarios import ALICE_CART, ALICE_SHIPPING, BITS, REFUND_TARGETS, REPAY_TARGET
@@ -80,40 +82,34 @@ def act(request, bit):
         )
     elif bit in REFUND_TARGETS:
         _require(request, 'orders.add_refund')
-        refund, created = _propose_refund(request.user, bit)
+        verdict, refund, created = _propose_refund(request.user, bit)
         if not created:
             messages.info(
                 request,
                 f'{refund.order.order_number} 에 대한 제안이 이미 올라가 있습니다 '
                 f'({refund.get_status_display()}).',
             )
-        elif refund.status == Refund.Status.APPROVED:
+        elif verdict.kind == Verdict.ALLOW:
             messages.success(
                 request,
-                f'세계가 허용했다 ⚠️ — {refund.order.order_number} 환불 {refund.amount:,}원이 '
-                f'자동 승인되었습니다. 주문은 {refund.order.get_status_display()} 로 바뀌었습니다. '
-                f'아무도 이 요청을 검사하지 않았습니다.',
+                f'규칙이 확정했다 ✅ — {refund.order.order_number} 환불 '
+                f'{refund.amount:,}원을 자동 승인했습니다. {verdict.reason}',
             )
-        else:
+        elif verdict.kind == Verdict.ESCALATE:
             messages.warning(
                 request,
-                f'점주 승인 대기 ⏳ — {refund.order.order_number} 환불 {refund.amount:,}원을 '
-                f'제안했습니다. 주문 상태는 아직 '
-                f'{refund.order.get_status_display()} 입니다.',
+                f'점주 승인 대기 ⏳ — {verdict.reason} '
+                f'주문 상태는 아직 {refund.order.get_status_display()} 입니다.',
             )
+        return _respond(request, verdict)
     elif bit == 'repay-paid':
         _require(request, 'orders.change_order')
-        order, before, after = _repay(request.user)
-        messages.success(
-            request,
-            f'세계가 허용했다 ⚠️ — {order.order_number} 를 다시 결제 처리했습니다. '
-            f'주문 상태는 {order.get_status_display()} 그대로인데 '
-            f'재고는 {before} → {after} 로 또 깎였습니다.',
-        )
+        verdict = _repay(request.user)
+        return _respond(request, verdict)
     else:
         raise PermissionDenied('알 수 없는 시나리오입니다.')
 
-    return redirect('agent:console')
+    return _respond(request, Verdict(kind=Verdict.ALLOW))
 
 
 def _require(request, perm):
@@ -152,24 +148,46 @@ def _propose_refund(actor, bit):
     if existing:
         # 같은 제안을 두 번 올려도 큐가 지저분해지지 않게 콘솔 쪽에서만 걸러 준다.
         # 세계가 막아 주는 것이 아니다 — 그 얘기는 5단계다.
-        return existing, False
-    refund = Refund.auto_or_escalate(
+        return Refund.decide(order, existing.amount, actor), existing, False
+    verdict, refund = Refund.apply(
         order=order,
         amount=order.total_amount,
         reason=reason,
         requested_by=actor,
     )
-    return refund, True
+    return verdict, refund, True
 
 
 def _repay(actor):
     """이미 결제 완료된 주문에 결제 처리를 한 번 더 돌린다.
 
-    권한 검사는 통과했다 — 결제 처리는 AI 직원의 업무다. 그럼 상태는 누가 보는가.
+    권한 검사는 통과했다 — 결제 처리는 AI 직원의 업무다.
+    그런데 '지금 상태에서 갈 수 있는 곳인가'는 권한이 답하지 않는다. 전이 계약이 답한다.
     """
     order = get_object_or_404(Order, order_number=REPAY_TARGET)
-    item = order.items.select_related('product').first()
-    before = item.product.stock
-    order.mark_paid()
-    after = Product.objects.get(pk=item.product.pk).stock
-    return order, before, after
+    try:
+        order.mark_paid()
+    except InvalidTransition as denied:
+        return denied.verdict
+    return Verdict(
+        kind=Verdict.ALLOW,
+        reason=f'{order.order_number} 을(를) 결제 완료로 옮겼습니다.',
+    )
+
+
+def _respond(request, verdict):
+    """판정을 밖으로 내보낸다 — 같은 판정, 두 가지 표현.
+
+    API(`Accept: application/json`)에는 판정 객체를 그대로 준다. 실접속 트랙의
+    MCP 클라이언트가 읽을 형식이 이것이다.
+    브라우저에는 ALLOW·ESCALATE 는 콘솔로 되돌리고(PRG), DENY 만 409 화면을 띄운다.
+    """
+    if 'application/json' in request.headers.get('Accept', ''):
+        return JsonResponse(
+            verdict.as_dict(),
+            status=verdict.status_code,
+            json_dumps_params={'ensure_ascii': False},
+        )
+    if verdict.kind == Verdict.DENY:
+        return render(request, 'agent/denied.html', {'verdict': verdict}, status=409)
+    return redirect('agent:console')

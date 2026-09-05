@@ -203,9 +203,8 @@ def test_동시에_두_번_결제해도_한_번만_성공한다(world, contract)
     results = []
 
     def run():
-        fresh = Order.objects.get(pk=order.pk)
         try:
-            fresh.mark_paid()
+            Order.objects.get(pk=order.pk).mark_paid()
             results.append('ok')
         except InvalidTransition:
             results.append('denied')
