@@ -1,0 +1,20 @@
+line-length = 100
+target-version = "py312"
+extend-exclude = ["**/migrations"]
+
+[format]
+quote-style = "single"
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import 정렬)
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "DJ",  # flake8-django
+]
+
+[lint.flake8-quotes]
+inline-quotes = "single"
