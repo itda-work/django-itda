@@ -55,7 +55,19 @@ git diff stage-04-start stage-04-done      # 정답 해설
 git checkout main                          # 원위치
 ```
 
-0단계는 시작 상태가 빈 저장소이므로 `stage-00-start`가 없다. `stage-00-done`만 있다.
+예외가 둘 있다.
+
+- 0단계는 시작 상태가 빈 저장소이므로 `stage-00-start`가 없다. `stage-00-done`만 있다.
+- **2·3단계는 애플리케이션 코드를 고치지 않는다**(해부·실측 단계). 앱 코드가 이전 단계와
+  같으므로 `-start` 태그 없이 `stage-02-done` · `stage-03-done`만 있고, 그 테스트는
+  이전 단계 완료 상태에서 이미 통과한다. 자세한 규약은 [stages/README.md](stages/README.md).
+
+| # | 단계 | 태그 |
+|---|---|---|
+| 0 | 씨앗 | `stage-00-done` |
+| 1 | 점주의 자리 | `stage-01-start` · `stage-01-done` |
+| 2 | 귀속 | `stage-02-done` |
+| 3 | 워밍업 | `stage-03-done` |
 
 ## 구조
 
