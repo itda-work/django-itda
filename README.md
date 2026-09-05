@@ -12,17 +12,23 @@
 
 ```bash
 just setup   # uv sync → migrate → seed_world
-just run     # http://127.0.0.1:8000/admin/
+just run
 ```
 
-admin에 `owner` / `owner1234` 로 로그인한다.
+자리가 둘이다. 창을 두 개로 나눠(일반 창 · 시크릿 창) 각각 로그인한다.
+
+| 자리 | 주소 | 계정 |
+|---|---|---|
+| AI 직원 콘솔 (제안) | <http://127.0.0.1:8000/agent/> | `ai-staff` / `ai1234` |
+| 점주 승인 큐 (확정) | <http://127.0.0.1:8000/admin/orders/refund/> | `owner` / `owner1234` |
 
 시드 계정
 
 | 계정 | 비밀번호 | 역할 |
 |---|---|---|
-| `owner` | `owner1234` | 점주. admin 접근 가능 |
-| `ai-staff` | `ai1234` | AI 직원 서비스 계정. admin 접근 불가 |
+| `owner` | `owner1234` | 점주. 그룹 `점주` — 환불 승인·거부. **superuser 아님** |
+| `ai-staff` | `ai1234` | AI 직원 서비스 계정. 그룹 `AI직원` — 주문 접수·환불 제안까지 |
+| `admin` | `admin1234` | superuser. 교육용 뒷문 |
 | `alice`, `bob` | `pass1234` | 고객 |
 
 ## 자주 쓰는 명령
@@ -55,9 +61,10 @@ git checkout main                          # 원위치
 
 ```
 config/     프로젝트 설정·URL
-accounts/   User(AbstractUser) · seed_world 관리 명령
+accounts/   User(AbstractUser) · seed_world 관리 명령(계정·그룹·권한)
 shop/       Category · Product
-orders/     Order · OrderItem · Refund
+orders/     Order · OrderItem · Refund · 환불 확정 API
+agent/      AI 직원 콘솔 · 고정 시나리오 fixture
 tests/      단계별 채점 테스트 (stage_NN_*.py)
 stages/     단계별 학생용 지시서
 docs/       설계 정본

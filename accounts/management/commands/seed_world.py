@@ -7,6 +7,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -16,13 +17,39 @@ from shop.models import Category, Product
 
 User = get_user_model()
 
-# (username, 비밀번호, is_staff, is_superuser, 설명)
+# (username, 비밀번호, is_staff, is_superuser, 그룹, 설명)
+#
+# 점주는 superuser 가 아니다. 승인할 수 있는 이유가 '전능해서'가 아니라
+# '그 권한을 가져서'여야 권한이 법이라는 것이 보인다. 전능한 계정은 admin 하나로 뺐다.
 ACCOUNTS = [
-    ('owner', 'owner1234', True, True, '점주'),
-    ('ai-staff', 'ai1234', False, False, 'AI 직원 서비스 계정'),
-    ('alice', 'pass1234', False, False, '고객'),
-    ('bob', 'pass1234', False, False, '고객'),
+    ('admin', 'admin1234', True, True, None, '슈퍼유저(교육용 뒷문)'),
+    ('owner', 'owner1234', True, False, '점주', '점주'),
+    ('ai-staff', 'ai1234', False, False, 'AI직원', 'AI 직원 서비스 계정'),
+    ('alice', 'pass1234', False, False, None, '고객'),
+    ('bob', 'pass1234', False, False, None, '고객'),
 ]
+
+# 그룹 = 자리. 그 자리에서 할 수 있는 일의 목록이 곧 권한이다.
+GROUPS = {
+    # AI 직원은 '제안'까지다. 환불을 만들 수는 있어도 바꿀 수는 없다.
+    'AI직원': [
+        'orders.add_order',
+        'orders.view_order',
+        'orders.add_refund',
+        'shop.view_product',
+    ],
+    # 점주는 '확정'한다. change_refund 한 줄이 승인 큐의 액션을 켜는 열쇠다.
+    '점주': [
+        'orders.view_order',
+        'orders.change_order',
+        'orders.view_orderitem',
+        'orders.view_refund',
+        'orders.change_refund',
+        'shop.view_category',
+        'shop.view_product',
+        'accounts.view_user',
+    ],
+}
 
 # (슬러그, 이름)
 CATEGORIES = [
@@ -70,7 +97,8 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        users = self._seed_users()
+        groups = self._seed_groups()
+        users = self._seed_users(groups)
         categories = self._seed_categories()
         products = self._seed_products(categories)
         self._seed_orders(users, products)
@@ -82,14 +110,33 @@ class Command(BaseCommand):
             )
         )
 
-    def _seed_users(self):
+    def _seed_groups(self):
+        groups = {}
+        for name, codenames in GROUPS.items():
+            group, _ = Group.objects.get_or_create(name=name)
+            group.permissions.set(self._permissions(codenames))
+            groups[name] = group
+            self.stdout.write(f'  그룹 {name} — 권한 {len(codenames)}개')
+        return groups
+
+    def _permissions(self, codenames):
+        permissions = []
+        for codename in codenames:
+            app_label, code = codename.split('.')
+            permissions.append(
+                Permission.objects.get(content_type__app_label=app_label, codename=code)
+            )
+        return permissions
+
+    def _seed_users(self, groups):
         users = {}
-        for username, password, is_staff, is_superuser, note in ACCOUNTS:
+        for username, password, is_staff, is_superuser, group_name, note in ACCOUNTS:
             user, created = User.objects.get_or_create(username=username)
             user.is_staff = is_staff
             user.is_superuser = is_superuser
             user.set_password(password)
             user.save()
+            user.groups.set([groups[group_name]] if group_name else [])
             users[username] = user
             self.stdout.write(f'  사용자 {username} ({note}) {"생성" if created else "갱신"}')
         return users

@@ -33,7 +33,7 @@ def test_seed_world_는_멱등이다():
     second = _counts()
 
     assert first == second
-    assert first == {'user': 4, 'category': 2, 'product': 6, 'order': 4, 'order_item': 6}
+    assert first == {'user': 5, 'category': 2, 'product': 6, 'order': 4, 'order_item': 6}
 
 
 @pytest.mark.django_db

@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'accounts',
     'shop',
     'orders',
+    'agent',
 ]
 
 MIDDLEWARE = [
@@ -69,6 +70,10 @@ DATABASES = {
 
 
 AUTH_USER_MODEL = 'accounts.User'
+
+# AI 직원은 is_staff 가 아니라 admin 로그인 화면을 쓸 수 없다 — 콘솔 로그인으로 보낸다.
+LOGIN_URL = '/agent/login/'
+LOGIN_REDIRECT_URL = '/agent/'
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},

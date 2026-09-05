@@ -1,0 +1,137 @@
+{% extends 'agent/base.html' %}
+
+{% block body %}
+<header class="mb-8">
+  <div class="flex items-baseline justify-between">
+    <h1 class="text-2xl font-bold">🤖 AI 직원 콘솔</h1>
+    <div class="text-sm text-slate-500">
+      접속 계정 <span class="font-mono font-semibold text-slate-700">{{ user.username }}</span>
+      <form method="post" action="{% url 'agent:logout' %}" class="inline">
+        {% csrf_token %}
+        <button class="ml-2 underline hover:text-slate-800">로그아웃</button>
+      </form>
+    </div>
+  </div>
+  <p class="mt-2 text-slate-600">
+    AI 직원이 제안한다. 세계가 판정한다. 확정은
+    <a href="/admin/orders/refund/" class="underline">점주의 승인 큐</a>에서 사람이 한다.
+  </p>
+</header>
+
+{% if messages %}
+<ul class="mb-6 space-y-2">
+  {% for message in messages %}
+  <li class="rounded-lg border px-4 py-3 text-sm
+    {% if message.level_tag == 'success' %}border-emerald-300 bg-emerald-50 text-emerald-900
+    {% elif message.level_tag == 'warning' %}border-amber-300 bg-amber-50 text-amber-900
+    {% else %}border-slate-300 bg-white text-slate-800{% endif %}">
+    {{ message }}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<section class="space-y-4">
+  {% for bit in bits %}
+  <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex-1">
+        <h2 class="font-semibold">{{ bit.no }} {{ bit.title }}</h2>
+        <p class="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          “{{ bit.proposal }}”
+        </p>
+        <p class="mt-2 text-xs text-slate-500">{{ bit.detail }}</p>
+        <p class="mt-1 text-xs text-slate-400">예상: {{ bit.expect }}</p>
+      </div>
+      <div class="shrink-0">
+        {% if bit.action == 'refresh' %}
+        <a href="{% url 'agent:console' %}"
+           class="inline-block rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
+          {{ bit.button }}
+        </a>
+        {% else %}
+        <form method="post" action="{% url 'agent:act' bit.key %}">
+          {% csrf_token %}
+          <button class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
+            {{ bit.button }}
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="mt-10">
+  <h2 class="mb-3 text-lg font-semibold">세계의 현재 상태</h2>
+
+  <h3 class="mt-4 mb-2 text-sm font-semibold text-slate-500">환불 대상 주문</h3>
+  <ul class="space-y-2">
+    {% for row in watched %}
+    <li class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
+      <span class="font-mono text-sm">{{ row.order.order_number }}</span>
+      <span class="text-sm text-slate-500">{{ row.order.total_amount|floatformat:0 }}원</span>
+      <span class="rounded-full px-3 py-1 text-xs font-semibold {{ row.badge }}">
+        {{ row.order.get_status_display }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="mt-6 mb-2 text-sm font-semibold text-slate-500">환불 제안</h3>
+  {% if refunds %}
+  <ul class="space-y-2">
+    {% for row in refunds %}
+    <li class="rounded-lg border border-slate-200 bg-white px-4 py-3">
+      <div class="flex items-center justify-between">
+        <span class="font-mono text-sm">{{ row.refund.order.order_number }}</span>
+        <span class="rounded-full px-3 py-1 text-xs font-semibold {{ row.badge }}">
+          {{ row.refund.get_status_display }}
+        </span>
+      </div>
+      <p class="mt-1 text-sm text-slate-600">{{ row.refund.reason }}</p>
+      <p class="mt-1 text-xs text-slate-400">
+        요청 {{ row.refund.requested_by|default:'—' }} ·
+        결정 {{ row.refund.decided_by|default:'아직 없음' }}
+      </p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-sm text-slate-400">아직 제안이 없다.</p>
+  {% endif %}
+
+  <h3 class="mt-6 mb-2 text-sm font-semibold text-slate-500">최근 주문</h3>
+  <ul class="space-y-2">
+    {% for row in recent_orders %}
+    <li class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm">
+      <span class="font-mono">{{ row.order.order_number }}</span>
+      <span class="text-slate-500">{{ row.order.user }}</span>
+      <span class="rounded-full px-3 py-1 text-xs font-semibold {{ row.badge }}">
+        {{ row.order.get_status_display }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="mt-10 rounded-xl border-2 border-dashed border-rose-300 bg-rose-50 p-5">
+  <h2 class="font-semibold text-rose-900">의도적 실패 — AI 직원이 직접 확정해 본다</h2>
+  <p class="mt-2 text-sm text-rose-800">
+    점주를 기다리지 말고, AI 직원이 자기가 올린 제안을 자기가 승인해 보자.
+    화면에서 버튼을 숨겨 막는 것이 아니라 서버가 어떻게 답하는지를 본다.
+  </p>
+  {% if self_target %}
+  <form method="post" action="{% url 'orders:approve-refund' self_target.pk %}" class="mt-3">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{% url 'agent:console' %}">
+    <button class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500">
+      AI 직원으로 직접 승인 시도 ({{ self_target.order.order_number }})
+    </button>
+  </form>
+  {% else %}
+  <p class="mt-3 text-sm text-rose-500">승인 대기 중인 제안이 없다. ② 또는 ④를 먼저 실행한다.</p>
+  {% endif %}
+</section>
+{% endblock %}

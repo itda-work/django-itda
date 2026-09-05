@@ -6,6 +6,7 @@ from datetime import date
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F
+from django.utils import timezone
 
 from shop.models import Product
 
@@ -108,7 +109,10 @@ class OrderItem(models.Model):
 
 
 class Refund(models.Model):
-    """환불. 주문 금액의 전부 또는 일부를 되돌려준 기록."""
+    """환불. AI 직원이 *제안*하고 점주가 *확정*한다.
+
+    태어날 때는 '제안됨'이다. 제안만으로는 주문이 움직이지 않는다.
+    """
 
     class Status(models.TextChoices):
         PROPOSED = 'proposed', '제안됨'
@@ -121,7 +125,7 @@ class Refund(models.Model):
     amount = models.PositiveIntegerField('환불 금액')
     reason = models.CharField('사유', max_length=200)
     status = models.CharField(
-        '상태', max_length=20, choices=Status.choices, default=Status.APPROVED
+        '상태', max_length=20, choices=Status.choices, default=Status.PROPOSED
     )
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -149,3 +153,27 @@ class Refund(models.Model):
 
     def __str__(self):
         return f'{self.order.order_number} 환불 {self.amount:,}원'
+
+    def approve(self, by):
+        """점주가 확정한다 — 환불을 승인하고 주문을 취소로 옮긴다.
+
+        지금은 '누가 확정했는가'만 기록한다. 이미 승인된 제안을 또 승인하면 어떻게
+        되는지, 그 사이에 주문 상태가 바뀌었으면 어떻게 되는지는 아직 아무도 안 본다
+        (전이 계약은 4단계에서 이사 온다).
+        """
+        self.status = self.Status.APPROVED
+        self.decided_by = by
+        self.decided_at = timezone.now()
+        self.save(update_fields=['status', 'decided_by', 'decided_at'])
+
+        self.order.status = Order.Status.CANCELLED
+        self.order.save(update_fields=['status', 'updated_at'])
+
+    def reject(self, by, note=''):
+        """점주가 거부한다 — 주문은 그대로 두고, 거부했다는 사실을 남긴다."""
+        self.status = self.Status.REJECTED
+        self.decided_by = by
+        self.decided_at = timezone.now()
+        if note:
+            self.reason = f'{self.reason} / 점주 메모: {note}'[:200]
+        self.save(update_fields=['status', 'decided_by', 'decided_at', 'reason'])

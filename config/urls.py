@@ -1,11 +1,13 @@
 """URL 설정.
 
-0단계의 세계는 admin 하나뿐이다. 점주는 admin에서 세계를 들여다본다.
+자리가 둘이다. `/admin/` 은 점주가 확정하는 자리, `/agent/` 는 AI 직원이 제안하는 자리다.
 """
 
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('agent/', include('agent.urls')),
+    path('orders/', include('orders.urls')),
 ]
