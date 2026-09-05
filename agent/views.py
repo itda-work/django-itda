@@ -15,7 +15,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from orders.models import InvalidTransition, Order, OrderItem, Refund
-from orders.verdict import Verdict
+from orders.verdict import Outcome, Verdict
 from shop.models import Product
 
 from .scenarios import ALICE_CART, ALICE_SHIPPING, BITS, REFUND_TARGETS, REPAY_TARGET
@@ -82,20 +82,17 @@ def act(request, bit):
         )
     elif bit in REFUND_TARGETS:
         _require(request, 'orders.add_refund')
-        verdict, refund, created = _propose_refund(request.user, bit)
-        if not created:
-            messages.info(
-                request,
-                f'{refund.order.order_number} 에 대한 제안이 이미 올라가 있습니다 '
-                f'({refund.get_status_display()}).',
-            )
-        elif verdict.kind == Verdict.ALLOW:
+        verdict, outcome = _propose_refund(request.user, bit)
+        refund = outcome.refund
+        if outcome.state == Outcome.ALREADY:
+            messages.info(request, f'{verdict.reason}')
+        elif outcome.state == Outcome.COMMITTED:
             messages.success(
                 request,
                 f'규칙이 확정했다 ✅ — {refund.order.order_number} 환불 '
                 f'{refund.amount:,}원을 자동 승인했습니다. {verdict.reason}',
             )
-        elif verdict.kind == Verdict.ESCALATE:
+        elif outcome.state == Outcome.QUEUED:
             messages.warning(
                 request,
                 f'점주 승인 대기 ⏳ — {verdict.reason} '
@@ -148,14 +145,14 @@ def _propose_refund(actor, bit):
     if existing:
         # 같은 제안을 두 번 올려도 큐가 지저분해지지 않게 콘솔 쪽에서만 걸러 준다.
         # 세계가 막아 주는 것이 아니다 — 그 얘기는 5단계다.
-        return Refund.decide(order, existing.amount, actor), existing, False
-    verdict, refund = Refund.apply(
+        # 다시 판정하지 않고 **지금 처리 상태**를 그대로 답한다.
+        return existing.current_outcome()
+    return Refund.apply(
         order=order,
         amount=order.total_amount,
         reason=reason,
         requested_by=actor,
     )
-    return verdict, refund, True
 
 
 def _repay(actor):

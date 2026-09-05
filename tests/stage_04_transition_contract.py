@@ -9,12 +9,12 @@
 **대안(alternatives)** 이 붙는다. 거절만 하고 길을 안 알려주면 AI 직원은 우회를 시도한다.
 """
 
-import threading
 from datetime import timedelta
+from unittest import mock
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import OperationalError, connection
+from django.db import DatabaseError
 from django.utils import timezone
 
 from orders.models import Order, OrderItem, Refund
@@ -34,15 +34,25 @@ try:
         REFUND_001,
         REFUND_002,
         REFUND_WINDOW_DAYS,
+        RULE_TEXTS,
     )
-    from orders.verdict import Verdict
+    from orders.verdict import Outcome, Verdict
 
     MISSING = None
 except ImportError as exc:  # 4단계 시작 상태
     ESCALATE_OVER, REFUND_WINDOW_DAYS = 50_000, 7
     ORDER_001, REFUND_001, REFUND_002 = 'ORDER-001@v1', 'REFUND-001@v1', 'REFUND-002@v1'
-    Verdict = None
+    RULE_TEXTS = {
+        REFUND_001: '결제 후 7일이 지난 주문은 환불하지 마라.',
+        REFUND_002: '5만원을 초과하는 환불은 반드시 점주 승인을 받아라.',
+        ORDER_001: '이미 결제 완료된 주문을 다시 결제 완료로 만들지 마라.',
+    }
+    Outcome = Verdict = None
     MISSING = str(exc)
+
+# 대안 목록에 있으면 안 되는 말 — 이 세계에 경로가 없는 약속들이다.
+# (승인 회피를 권하는 '분할'과 미구현 '예외 승인·교환·재발송')
+FORBIDDEN_ALTERNATIVES = ('분할', '예외 승인', '교환', '재발송')
 
 
 @pytest.fixture
@@ -55,8 +65,19 @@ def contract():
     return InvalidTransition
 
 
-def _order(days_ago, total, status=Order.Status.PAID, number=None, product_name=None, quantity=1):
-    """며칠 전에 결제된 주문 하나를 만든다."""
+def _order(
+    days_ago,
+    total,
+    status=Order.Status.PAID,
+    number=None,
+    product_name=None,
+    quantity=1,
+    age=None,
+):
+    """며칠 전에 결제된 주문 하나를 만든다.
+
+    `age` 에 timedelta 를 주면 시간 단위까지 정확히 늙힐 수 있다(경계 검사용).
+    """
     alice = User.objects.get(username='alice')
     order = Order.objects.create(
         order_number=number or f'T-{days_ago}-{total}',
@@ -77,7 +98,7 @@ def _order(days_ago, total, status=Order.Status.PAID, number=None, product_name=
             quantity=quantity,
         )
     Order.objects.filter(pk=order.pk).update(
-        created_at=timezone.now() - timedelta(days=days_ago)
+        created_at=timezone.now() - (age if age is not None else timedelta(days=days_ago))
     )
     order.refresh_from_db()
     return order
@@ -106,7 +127,31 @@ def test_결제_후_7일이_지난_환불은_DENY(world, contract):
 
     assert verdict.kind == Verdict.DENY
     assert REFUND_001 in verdict.rule_ids
-    assert verdict.alternatives, 'DENY 에도 대안이 있어야 한다 — 막기만 하면 우회를 시도한다.'
+    _alternatives_are_real(verdict)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ('label', 'age', 'expected'),
+    [
+        ('7일 1시간 전', timedelta(days=REFUND_WINDOW_DAYS, hours=1), 'DENY'),
+        ('정확히 7일 전', timedelta(days=REFUND_WINDOW_DAYS), 'ALLOW'),
+        ('7일에서 1시간 모자람', timedelta(days=REFUND_WINDOW_DAYS, hours=-1), 'ALLOW'),
+    ],
+)
+def test_7일_경계는_시간까지_본다(world, contract, label, age, expected):
+    """`.days` 로 자르면 7일 23시간짜리가 '7일'이 되어 빠져나간다.
+
+    원문은 "7일이 **지난**" 이므로 정확히 7일까지는 허용하고, 초과분만 거부한다.
+    """
+    order = _order(0, 22_500, number=f'T-BOUND-{int(age.total_seconds())}')
+    # 경계는 마이크로초로 갈린다 — '지금'을 고정해 놓고 정확히 재 본다.
+    now = order.created_at + age
+
+    with mock.patch('orders.models.timezone.now', return_value=now):
+        verdict = Refund.decide(order, 22_500)
+
+    assert verdict.kind == getattr(Verdict, expected), f'{label} → {expected} 이어야 한다.'
 
 
 @pytest.mark.django_db
@@ -115,10 +160,12 @@ def test_DENY_판정이면_환불이_커밋되지_않는다(world, contract):
 
     ai = User.objects.get(username='ai-staff')
 
-    verdict, refund = Refund.apply(order, 22_500, '늦은 요청', ai)
+    verdict, outcome = Refund.apply(order, 22_500, '늦은 요청', ai)
 
     assert verdict.kind == Verdict.DENY
-    assert refund is None or refund.status == Refund.Status.REJECTED
+    assert outcome.state == Outcome.NOTHING, '거부된 요청은 승인 큐를 더럽히지 않는다.'
+    assert outcome.refund is None
+    assert not Refund.objects.filter(order=order).exists()
     order.refresh_from_db()
     assert order.status != Order.Status.CANCELLED
 
@@ -130,30 +177,69 @@ def test_기한_안_소액은_ALLOW_자동_승인(world, contract):
 
     ai = User.objects.get(username='ai-staff')
 
-    verdict, refund = Refund.apply(order, 30_000, '사이즈 불일치', ai)
+    verdict, outcome = Refund.apply(order, 30_000, '사이즈 불일치', ai)
+    refund = outcome.refund
 
     assert verdict.kind == Verdict.ALLOW
+    assert outcome.state == Outcome.COMMITTED, '판정이 ALLOW 인 것과 세계가 움직인 것은 다르다.'
     assert refund.status == Refund.Status.APPROVED
     assert refund.decided_by is None, '규칙이 확정한 것이지 사람이 확정한 것이 아니다.'
     assert refund.decided_via == 'rule'
+    order.refresh_from_db()
+    assert order.status == Order.Status.CANCELLED
 
 
 @pytest.mark.django_db
 def test_기한_안_고액은_ESCALATE(world, contract):
-    """3일 지난 7만원 — REFUND-002@v1. 점주에게 올라가고, 대안이 함께 나온다."""
+    """3일 지난 7만원 — REFUND-002@v1. 점주에게 올라가고, 주문은 아직 안 움직인다."""
     order = _order(3, 70_000)
 
     ai = User.objects.get(username='ai-staff')
 
-    verdict, refund = Refund.apply(order, 70_000, '사이즈 불일치', ai)
+    verdict, outcome = Refund.apply(order, 70_000, '사이즈 불일치', ai)
+    refund = outcome.refund
 
     assert verdict.kind == Verdict.ESCALATE
     assert REFUND_002 in verdict.rule_ids
+    assert outcome.state == Outcome.QUEUED
     assert refund.status == Refund.Status.PROPOSED
     assert refund.decided_by is None
-    assert any(str(ESCALATE_OVER // 10000) in a or '분할' in a for a in verdict.alternatives), (
-        f'대안에 분할 환불 같은 길이 하나는 있어야 한다: {verdict.alternatives}'
-    )
+    order.refresh_from_db()
+    assert order.status != Order.Status.CANCELLED
+    _alternatives_are_real(verdict)
+
+
+def _alternatives_are_real(verdict):
+    """대안은 **실제로 갈 수 있는 길**만이어야 한다. 빈 목록도 정직한 답이다.
+
+    없는 경로(예외 승인 큐·교환·재발송)를 약속하거나 승인 회피(분할 환불)를
+    권하면 그건 대안이 아니다.
+    """
+    for alternative in verdict.alternatives:
+        for banned in FORBIDDEN_ALTERNATIVES:
+            assert banned not in alternative, (
+                f'실행 경로가 없거나 승인을 회피하는 대안이다: {alternative!r}'
+            )
+
+
+@pytest.mark.django_db
+def test_승인_저장이_실패하면_환불도_남지_않는다(world, contract):
+    """환불 생성 → 승인 → 주문 취소는 하나의 트랜잭션이다.
+
+    마지막 저장이 깨졌는데 환불만 `approved` 로 남으면, 장부는 "환불했다"는데
+    주문은 살아 있게 된다. 그런 반쪽 상태가 생기지 않는지 실패를 주입해 본다.
+    """
+    order = _order(3, 30_000)
+    ai = User.objects.get(username='ai-staff')
+
+    with mock.patch.object(
+        Order, 'save', side_effect=DatabaseError('주입한 저장 실패')
+    ), pytest.raises(DatabaseError):
+        Refund.apply(order, 30_000, '사이즈 불일치', ai)
+
+    assert not Refund.objects.filter(order=order).exists(), '승인된 환불이 남아 있으면 안 된다.'
+    order.refresh_from_db()
+    assert order.status == Order.Status.PAID, '주문도 원래대로 돌아와야 한다.'
 
 
 # --- 전이 계약 -----------------------------------------------------------------
@@ -191,38 +277,66 @@ def test_정상_전이는_그대로_통과한다(world):
     assert Product.objects.get(pk=product.pk).stock == before - 1
 
 
-@pytest.mark.django_db(transaction=True)
-def test_동시에_두_번_결제해도_한_번만_성공한다(world, contract):
-    """조건부 UPDATE 의 rowcount 는 경합에서도 정확히 하나만 1이다.
+@pytest.mark.django_db
+def test_두_번_호출해도_재고는_한_번만_깎인다(world, contract):
+    """전이 계약 하나만으로 '두 번 깎이는 일'이 사라지는지 본다.
 
-    5단계(경합)의 예고편이다. 여기서는 전이 계약 하나만으로도
-    '두 번 깎이는 일'이 사라진다는 것까지만 본다.
+    **이것은 경합의 증명이 아니다.** 두 호출을 순서대로 낼 뿐이다. 그래도
+    보이는 것이 있다 — 두 번째 호출은 `InvalidTransition` 으로 끊기고,
+    재고는 한 번만 깎인다. 이사 전에는 두 번 다 통과해 두 번 깎였다(카드 ⑥).
+
+    스레드를 쓰지 않는 이유도 학습거리다. Django 의 SQLite 테스트 DB 는
+    shared-cache 인메모리라 두 스레드가 같은 테이블을 만지면 `OperationalError`
+    (잠금 실패)가 먼저 난다. 그걸 '거부됨'으로 세면 계약이 지켜졌다는 **거짓
+    통과**가 된다 — 잠금 실패는 도메인 DENY 가 아니다. 동기화된 경합 증명·잠금
+    재시도·패자의 HTTP 응답은 **5단계**에서 제대로 다룬다.
     """
     InvalidTransition = contract
     order = _order(0, 18_000, status=Order.Status.PENDING, product_name='만년필 잉크 30ml')
     before = Product.objects.get(name='만년필 잉크 30ml').stock
     results = []
 
-    def run():
+    for _ in range(2):
         try:
             Order.objects.get(pk=order.pk).mark_paid()
             results.append('ok')
         except InvalidTransition:
             results.append('denied')
-        except OperationalError:
-            # SQLite 는 쓰기 잠금이 파일 단위다. 잠금으로 밀린 쪽도 '성공하지 못했다'.
-            results.append('locked')
-        finally:
-            connection.close()
 
-    threads = [threading.Thread(target=run) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
+    assert len(results) == 2, f'두 호출의 결과가 모두 수집돼야 한다: {results}'
     assert results.count('ok') == 1, f'정확히 한 번만 성공해야 한다: {results}'
+    assert results.count('denied') == 1, f'나머지 한 번은 전이 계약이 거부해야 한다: {results}'
     assert Product.objects.get(name='만년필 잉크 30ml').stock == before - 1
+
+
+@pytest.mark.django_db
+def test_뒤_상품에서_재고가_모자라면_앞_상품_차감도_돌아온다(world, contract):
+    """전이와 모든 재고 차감이 한 트랜잭션 안에 있는가.
+
+    두 상품짜리 주문에서 두 번째 상품의 재고가 모자라면, 이미 깎아 놓은
+    첫 번째 상품의 재고도 되돌아와야 한다. 상태 전이도 마찬가지다.
+    """
+    from orders.models import InsufficientStock
+
+    first, second = Product.objects.all().order_by('pk')[:2]
+    order = _order(0, 1_000, status=Order.Status.PENDING, number='T-ROLLBACK')
+    for product, quantity in ((first, 1), (second, second.stock + 1)):
+        OrderItem.objects.create(
+            order=order,
+            product=product,
+            product_name=product.name,
+            unit_price=product.price,
+            quantity=quantity,
+        )
+    before_first, before_second = first.stock, second.stock
+
+    with pytest.raises(InsufficientStock):
+        order.mark_paid()
+
+    assert Product.objects.get(pk=first.pk).stock == before_first, '앞 상품 차감이 복원돼야 한다.'
+    assert Product.objects.get(pk=second.pk).stock == before_second
+    order.refresh_from_db()
+    assert order.status == Order.Status.PENDING, '상태 전이도 함께 되돌아간다.'
 
 
 # --- 콘솔 악성 카드 ⑤⑥ -------------------------------------------------------
@@ -272,11 +386,40 @@ def test_카드2_고액_제안은_202로_점주에게_올라간다(world, client
 # --- 규칙 대장 -----------------------------------------------------------------
 
 
-def test_규칙_대장에_세_행이_있다():
-    """이사한 규칙은 대장에 남는다. 코드만 고치고 대장을 안 쓰면 반쪽이다."""
+def _ledger():
     from pathlib import Path
 
-    ledger = (Path(__file__).resolve().parent.parent / 'RULES.md').read_text(encoding='utf-8')
+    return (Path(__file__).resolve().parent.parent / 'RULES.md').read_text(encoding='utf-8')
+
+
+def test_규칙_대장에_세_행이_있다():
+    """이사한 규칙은 대장에 남는다. 코드만 고치고 대장을 안 쓰면 반쪽이다."""
+    ledger = _ledger()
 
     for rule_id in (REFUND_001, REFUND_002, ORDER_001):
         assert rule_id in ledger, f'{rule_id} 이(가) RULES.md 에 없다.'
+
+
+def test_대장의_ID는_유일하다():
+    """같은 ID 로 두 행을 쓰면 "어느 것이 시행 중인가"에 답할 수 없다.
+
+    버전이 바뀌면 `@v2` 라는 **다른 ID** 로 새 행을 덧붙인다.
+    """
+    ledger = _ledger()
+
+    for rule_id in (REFUND_001, REFUND_002, ORDER_001):
+        rows = [line for line in ledger.splitlines() if line.startswith(f'| `{rule_id}`')]
+        assert len(rows) == 1, f'{rule_id} 행이 {len(rows)}개다 — 대장의 ID 는 유일해야 한다.'
+
+
+def test_대장의_원문은_보존된다():
+    """대장은 **삭제 금지·내용 보존** 대장이다.
+
+    원문은 사람이 말한 문장 그대로여야 한다. 코드가 바뀌었다고 원문을 고쳐
+    맞추면 "그때 뭐라고 했었나"를 영영 알 수 없다. 원문을 바꿔야 할 상황이면
+    그건 새 버전(`@v2`)이지 덮어쓰기가 아니다.
+    """
+    ledger = _ledger()
+
+    for rule_id, text in RULE_TEXTS.items():
+        assert text in ledger, f'{rule_id} 의 원문이 대장에서 사라지거나 바뀌었다: {text}'
