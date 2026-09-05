@@ -37,7 +37,7 @@ just run
 just test        # 전체 테스트
 just test 00     # tests/stage_00_*.py 만
 just reset-db    # db.sqlite3 삭제 후 migrate + seed_world
-just stage 03    # stage-03-start 태그로 이동(그 단계의 시작 상태)
+just stage 04    # stage-04-start 태그로 이동(그 단계의 시작 상태)
 ```
 
 ## 단계 태그 사용법
