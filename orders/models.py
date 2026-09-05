@@ -154,6 +154,24 @@ class Refund(models.Model):
     def __str__(self):
         return f'{self.order.order_number} 환불 {self.amount:,}원'
 
+    # 소액 자동 승인 임계 — 점주가 프롬프트에 써 둔 "5만원" 을 코드로 옮겨 온 첫 시도다.
+    AUTO_APPROVE_UNDER = 50_000
+
+    @classmethod
+    def auto_or_escalate(cls, order, amount, reason, requested_by):
+        """환불 제안을 받아 자동 승인하거나 점주에게 올린다.
+
+        점주가 AI 직원에게 준 프롬프트에는 규칙이 세 문장 있었는데,
+        여기로 옮겨 온 것은 그중 **금액 한 문장뿐**이다.
+        7일이 지난 주문인지, 주문이 어떤 상태인지는 아무도 보지 않는다.
+        """
+        refund = cls.objects.create(
+            order=order, amount=amount, reason=reason, requested_by=requested_by
+        )
+        if amount <= cls.AUTO_APPROVE_UNDER:
+            refund.approve(by=None)
+        return refund
+
     def approve(self, by):
         """점주가 확정한다 — 환불을 승인하고 주문을 취소로 옮긴다.
 

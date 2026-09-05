@@ -16,7 +16,7 @@ from django.views.decorators.http import require_POST
 from orders.models import Order, OrderItem, Refund
 from shop.models import Product
 
-from .scenarios import ALICE_CART, ALICE_SHIPPING, BITS, REFUND_TARGETS
+from .scenarios import ALICE_CART, ALICE_SHIPPING, BITS, REFUND_TARGETS, REPAY_TARGET
 
 User = get_user_model()
 
@@ -81,18 +81,35 @@ def act(request, bit):
     elif bit in REFUND_TARGETS:
         _require(request, 'orders.add_refund')
         refund, created = _propose_refund(request.user, bit)
-        if created:
+        if not created:
+            messages.info(
+                request,
+                f'{refund.order.order_number} 에 대한 제안이 이미 올라가 있습니다 '
+                f'({refund.get_status_display()}).',
+            )
+        elif refund.status == Refund.Status.APPROVED:
+            messages.success(
+                request,
+                f'세계가 허용했다 ⚠️ — {refund.order.order_number} 환불 {refund.amount:,}원이 '
+                f'자동 승인되었습니다. 주문은 {refund.order.get_status_display()} 로 바뀌었습니다. '
+                f'아무도 이 요청을 검사하지 않았습니다.',
+            )
+        else:
             messages.warning(
                 request,
                 f'점주 승인 대기 ⏳ — {refund.order.order_number} 환불 {refund.amount:,}원을 '
                 f'제안했습니다. 주문 상태는 아직 '
                 f'{refund.order.get_status_display()} 입니다.',
             )
-        else:
-            messages.info(
-                request,
-                f'{refund.order.order_number} 에 대한 제안이 이미 승인 대기 중입니다.',
-            )
+    elif bit == 'repay-paid':
+        _require(request, 'orders.change_order')
+        order, before, after = _repay(request.user)
+        messages.success(
+            request,
+            f'세계가 허용했다 ⚠️ — {order.order_number} 를 다시 결제 처리했습니다. '
+            f'주문 상태는 {order.get_status_display()} 그대로인데 '
+            f'재고는 {before} → {after} 로 또 깎였습니다.',
+        )
     else:
         raise PermissionDenied('알 수 없는 시나리오입니다.')
 
@@ -129,15 +146,30 @@ def _intake_order(actor):
 def _propose_refund(actor, bit):
     number, reason = REFUND_TARGETS[bit]
     order = get_object_or_404(Order, order_number=number)
-    pending = Refund.objects.filter(order=order, status=Refund.Status.PROPOSED).first()
-    if pending:
+    existing = (
+        Refund.objects.filter(order=order).exclude(status=Refund.Status.REJECTED).first()
+    )
+    if existing:
         # 같은 제안을 두 번 올려도 큐가 지저분해지지 않게 콘솔 쪽에서만 걸러 준다.
         # 세계가 막아 주는 것이 아니다 — 그 얘기는 5단계다.
-        return pending, False
-    refund = Refund.objects.create(
+        return existing, False
+    refund = Refund.auto_or_escalate(
         order=order,
         amount=order.total_amount,
         reason=reason,
         requested_by=actor,
     )
     return refund, True
+
+
+def _repay(actor):
+    """이미 결제 완료된 주문에 결제 처리를 한 번 더 돌린다.
+
+    권한 검사는 통과했다 — 결제 처리는 AI 직원의 업무다. 그럼 상태는 누가 보는가.
+    """
+    order = get_object_or_404(Order, order_number=REPAY_TARGET)
+    item = order.items.select_related('product').first()
+    before = item.product.stock
+    order.mark_paid()
+    after = Product.objects.get(pk=item.product.pk).stock
+    return order, before, after
