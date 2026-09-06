@@ -10,7 +10,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 
 ## 작업 절차
 
-1. **`docs/단계별-설계.md`와 `CLAUDE.md`를 먼저 읽는다.** 사양과 충돌하면 설계 문서가 이긴다.
+1. **`examples/itda-django/docs/단계별-설계.md` 와 두 `CLAUDE.md`(저장소 루트 = 패키지 규율, `examples/itda-django/CLAUDE.md` = 교육 프로젝트 규율)를 먼저 읽는다.** 사양과 충돌하면 설계 문서가 이긴다. 교육 프로젝트 작업의 cwd 는 `examples/itda-django/`, 패키지(`django_itda/`) 작업이면 루트 `CLAUDE.md` 가 정본이다.
 2. 해당 단계의 법 하나만 구현한다. 다음 단계의 "의도적 실패"로 예약된 결함은 **고치지 않는다**.
 3. 참고 코드 수확원: `~/Temp/test-django`(읽기만, 수정 금지).
 4. 완성 후 자체 검증을 수행하고 결과를 보고에 포함한다.
@@ -24,6 +24,8 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 - git 커밋은 호출 프롬프트가 요구할 때만, 한국어 메시지로.
 
 ## 자체 검증 (완성 후 필수)
+
+아래 1~4는 `examples/itda-django/` 에서 실행한다(루트 `.venv` 를 uv workspace 로 공유한다).
 
 1. `uv run ruff check .` 0건
 2. `uv run python manage.py makemigrations --check` 통과

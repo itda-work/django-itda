@@ -1,85 +1,31 @@
-# itda-django — 실행세계를 단계별로 엿보는 Django 프로젝트
+# django-itda — Django 실행세계 도구면 (working title)
 
-> 교육 프로젝트는 **itda-django**(이 저장소), 실행세계 도구면 패키지는 **django-itda**(`packages/django-itda/`, 같은 저장소의 uv workspace 멤버). 이름이 거울상이라 적어 둔다. 2026-09-06 까지의 이름은 hyve-django 였다.
+> **정체**: Django 앱을 AI 에이전트의 **판정 있는 도구면**으로 노출하는 패키지.
+> 도구 호출 하나하나가 Django의 `request.user`·permission을 1급 입력으로 받아 **ALLOW / DENY / ESCALATE** 3값으로 판정되고, ESCALATE는 사람 승인을 기다리는 핸들이 되며, 모든 호출은 Django ORM에 궤적으로 남는다.
+> 관통 논지 — **제안은 AI, 판정은 세계, 확정은 사람**(격상 건). 사람이 승인한 정책 범위는 규칙이 자동 확정한다.
 
-> **"AI 직원을 고용한 점주의 가게"** — AI가 주문·환불을 *제안*하고, 가게의 법(불변식·전이 계약·격상 임계)이 *판정*하고, 점주(학생)가 admin 승인 큐에서 *확정*한다.
+- 상태: 설계 단계 (2026-09-06). 첫 사용자는 같은 저장소의 교육 프로젝트 [itda-django](examples/itda-django/README.md)(`examples/itda-django/`)의 실접속 트랙. 2026-09-06 별도 저장소 `~/Apps/django-itda` 에서 이 저장소로 편입(임포트 이름 `django_itda`), 같은 날 구조 뒤집기로 패키지가 저장소 루트가 되고 교육 프로젝트가 예시로 함께 산다(uv workspace `members = ["examples/*"]`).
+- 정본 문서: [docs/벤치마킹-MCP-생태계.md](docs/벤치마킹-MCP-생태계.md)(감쌀 것/쓸 것 결정 근거) · [docs/설계.md](docs/설계.md)
 
-한 단계에 법 하나. 매 단계는 `준비 → 명령 → 의도적 실패 → 수정 → 검증 → 제출물` 순서로 진행한다.
-설계 정본은 [docs/단계별-설계.md](docs/단계별-설계.md), 단계 색인은 [stages/README.md](stages/README.md),
-켜진 법의 대장은 [RULES.md](RULES.md).
+## 무엇을 만드는가 (진짜 공백 — 벤치마킹 §7.3)
 
-## 빠른 시작
+1. **판정기** — Django User/Permission을 입력으로 하는 `Verdict(ALLOW|DENY|ESCALATE, rule_ids, reason, alternatives)` 계약과 도구 결과 매핑(DENY = 실행 오류로 모델 자기수정 가능, ESCALATE = 구조화 결과 + 승인 핸들).
+2. **격상(ESCALATE) ↔ 사람 승인** — 승인 핸들 모델 + admin 승인 화면 결합. MCP Tasks(`input_required`) 지원 클라이언트에는 Tasks로, 아니면 `get_approval_status` 폴링 핸들 폴백.
+3. **궤적(trajectory)** — 도구 호출·판정·결정 규칙·확정자를 append-only ORM 이벤트로(상관 ID). admin 열람.
+4. **권한 = 가시성** — 권한 없는 도구는 `tools/list`에서부터 제외되고 직접 호출도 차단(같은 검사).
+5. **Django 브리지** — stdio(`manage.py mcp_stdio`, 배포 변경 0)·Streamable HTTP(무상태 코어에 맞춘 뷰 브리지, WSGI 겸용)·세션 쿠키/토큰 인증 어댑터.
 
-필요한 것: Python 3.12+, [uv](https://docs.astral.sh/uv/), [just](https://just.systems).
+## 만들지 않는 것 (벤치마킹 §7.4)
 
-```bash
-just setup   # uv sync → migrate → seed_world
-just run
-```
+전송·프로토콜 구현, OAuth 2.1 RS, 스코프 가시성 엔진, 스키마 생성, 미들웨어 파이프라인, 태스크 상태머신, OpenTelemetry, OpenAPI 변환 — 전부 `mcp` v2 / `fastmcp` 4.x가 이미 제공. **"Django가 FastAPI에 밀리는 기능 종합 패키지"는 명시적 비목표**(django-ninja·코어 로드맵의 영역, 우리 논지와도 충돌).
 
-자리가 둘이다. 창을 두 개로 나눠(일반 창 · 시크릿 창) 각각 로그인한다.
+## 아키텍처 결정 (권고 B-1)
 
-| 자리 | 주소 | 계정 |
-|---|---|---|
-| AI 직원 콘솔 (제안) | <http://127.0.0.1:8000/agent/> | `ai-staff` / `ai1234` |
-| 점주 승인 큐 (확정) | <http://127.0.0.1:8000/admin/orders/refund/> | `owner` / `owner1234` |
+- 기반: **fastmcp 4.x**(mcp v2, 2026-07-28 스펙). 권한 필터(`auth=`)·궤적 훅(`Middleware.on_call_tool`)·Tasks(`fastmcp-tasks`)가 안정 공개 API.
+- 격리: fastmcp 의존은 `django_itda.adapters.fastmcp` **한 모듈**에만. 판정 계약·궤적 모델·승인 핸들·도구 선언은 fastmcp 타입에 의존하지 않는다(메이저 판올림 6~10개월 주기 대비).
+- 기각: django-mcp-server 위 확장(A) — mcp v1 고정, 마지막 커밋 2026-03, v2 마이그레이션 PR 미머지.
 
-시드 계정
+## 열린 결정
 
-| 계정 | 비밀번호 | 역할 |
-|---|---|---|
-| `owner` | `owner1234` | 점주. 그룹 `점주` — 환불 승인·거부. **superuser 아님** |
-| `ai-staff` | `ai1234` | AI 직원 서비스 계정. 그룹 `AI직원` — 주문 접수·환불 제안까지 |
-| `admin` | `admin1234` | superuser. 교육용 뒷문 |
-| `alice`, `bob` | `pass1234` | 고객 |
-
-## 자주 쓰는 명령
-
-```bash
-just test        # 전체 테스트
-just test 00     # tests/stage_00_*.py 만
-just reset-db    # db.sqlite3 삭제 후 migrate + seed_world
-just stage 04    # stage-04-start 태그로 이동(그 단계의 시작 상태)
-```
-
-## 단계 태그 사용법
-
-단계마다 태그가 두 개 있다.
-
-- `stage-NN-start` — 그 단계가 시작되는 상태. 다음에 터질 결함이 심어져 있고,
-  `tests/stage_NN_*.py`가 **실패한다**. 실패 자체가 "보장이 없다"의 증거다.
-- `stage-NN-done` — 법이 켜진 상태. 같은 테스트가 통과한다.
-
-```bash
-just stage 04                              # 4단계 시작 상태로
-just test 04                               # 실패를 눈으로 확인
-git diff stage-04-start stage-04-done      # 정답 해설
-git checkout main                          # 원위치
-```
-
-예외가 둘 있다.
-
-- 0단계는 시작 상태가 빈 저장소이므로 `stage-00-start`가 없다. `stage-00-done`만 있다.
-- **2·3단계는 애플리케이션 코드를 고치지 않는다**(해부·실측 단계). 앱 코드가 이전 단계와
-  같으므로 `-start` 태그 없이 `stage-02-done` · `stage-03-done`만 있고, 그 테스트는
-  이전 단계 완료 상태에서 이미 통과한다. 자세한 규약은 [stages/README.md](stages/README.md).
-
-| # | 단계 | 태그 |
-|---|---|---|
-| 0 | 씨앗 | `stage-00-done` |
-| 1 | 점주의 자리 | `stage-01-start` · `stage-01-done` |
-| 2 | 귀속 | `stage-02-done` |
-| 3 | 워밍업 | `stage-03-done` |
-
-## 구조
-
-```
-config/     프로젝트 설정·URL
-accounts/   User(AbstractUser) · seed_world 관리 명령(계정·그룹·권한)
-shop/       Category · Product
-orders/     Order · OrderItem · Refund · 환불 확정 API
-agent/      AI 직원 콘솔 · 고정 시나리오 fixture
-tests/      단계별 채점 테스트 (stage_NN_*.py)
-stages/     단계별 학생용 지시서
-docs/       설계 정본
-```
+- 패키지/임포트 이름(`django-itda` 는 작업명).
+- Tasks 클라이언트 지원 매트릭스(Claude Desktop/Code, ChatGPT) — 미확인 → 폴백 핸들이 기본.

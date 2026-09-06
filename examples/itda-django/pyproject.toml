@@ -1,0 +1,34 @@
+[project]
+name = "itda-django"
+version = "0.1.0"
+description = "실행세계를 단계별로 엿보는 Django 교육용 프로젝트"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.2,<5.3",
+    # 실행세계 도구면 패키지 — 저장소 루트가 이 패키지다(../../django_itda).
+    # 8단계에서 agent/live/mcp_server.py(임시)를 이 패키지의 선언으로 대체한다.
+    "django-itda",
+]
+
+[project.optional-dependencies]
+live = [
+    "fastmcp>=4,<5",
+    "httpx>=0.28.1",
+]
+
+# 루트(패키지)에도 같은 dev 그룹이 있지만, 이 디렉터리에서 `uv sync` 만 해도
+# 테스트가 돌아가야 하므로(`just setup`) 여기에도 둔다.
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-django>=4.11",
+    "ruff>=0.12",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["stage_*.py", "live_*.py", "test_*.py"]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+django-itda = { workspace = true }

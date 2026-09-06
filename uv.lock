@@ -319,7 +319,7 @@ wheels = [
 [[package]]
 name = "django-itda"
 version = "0.0.0"
-source = { editable = "packages/django-itda" }
+source = { editable = "." }
 dependencies = [
     { name = "django" },
 ]
@@ -329,12 +329,26 @@ fastmcp = [
     { name = "fastmcp" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-django" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "django", specifier = ">=5.2,<5.3" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=4,<5" },
 ]
 provides-extras = ["fastmcp"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-django", specifier = ">=4.11" },
+    { name = "ruff", specifier = ">=0.12" },
+]
 
 [[package]]
 name = "dnspython"
@@ -549,7 +563,7 @@ wheels = [
 [[package]]
 name = "itda-django"
 version = "0.1.0"
-source = { virtual = "." }
+source = { virtual = "examples/itda-django" }
 dependencies = [
     { name = "django" },
     { name = "django-itda" },
@@ -571,7 +585,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "django", specifier = ">=5.2,<5.3" },
-    { name = "django-itda", editable = "packages/django-itda" },
+    { name = "django-itda", editable = "." },
     { name = "fastmcp", marker = "extra == 'live'", specifier = ">=4,<5" },
     { name = "httpx", marker = "extra == 'live'", specifier = ">=0.28.1" },
 ]

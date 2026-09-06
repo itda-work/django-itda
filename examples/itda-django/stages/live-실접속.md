@@ -54,10 +54,10 @@ just token                    # = manage.py issue_token ai-staff --name claude-c
 ```bash
 claude mcp add itda-world \
   --env WORLD_TOKEN=위에서-받은-키 \
-  -- uv --directory /경로/itda-django run python agent/live/mcp_server.py
+  -- uv --directory /경로/django-itda/examples/itda-django run python agent/live/mcp_server.py
 ```
 
-`--directory` 에는 이 저장소의 절대 경로를 넣는다. `--env WORLD_URL=…` 로 주소를
+`--directory` 에는 교육 프로젝트 디렉터리(`examples/itda-django/`)의 절대 경로를 넣는다. `--env WORLD_URL=…` 로 주소를
 바꿀 수 있고, 기본값은 `http://127.0.0.1:8000` 이다.
 
 ### 3'. Claude Desktop 에 등록한다면
@@ -71,7 +71,7 @@ claude mcp add itda-world \
     "itda-world": {
       "command": "uv",
       "args": [
-        "--directory", "/경로/itda-django",
+        "--directory", "/경로/django-itda/examples/itda-django",
         "run", "python", "agent/live/mcp_server.py"
       ],
       "env": {

@@ -1,23 +1,13 @@
 # CLAUDE.md
 
-Django 실행세계 교육용 단계별 프로젝트. 설계 정본은 [docs/단계별-설계.md](docs/단계별-설계.md), 단계 색인은 [stages/README.md](stages/README.md).
+Django 실행세계 도구면 패키지. 정체·비목표는 [README.md](README.md), 근거는 [docs/벤치마킹-MCP-생태계.md](docs/벤치마킹-MCP-생태계.md).
 
-## 기본
-
-- 응답·문서·커밋 메시지는 한국어 우선. 코드 주석도 한국어.
-- 위치 `~/Apps/itda-work/itda-django` (2026-09-06 itda-skills 에서 이동, 같은 날 `hyve-django` 에서 `itda-django` 로 개명). 도구면 패키지 **django-itda** 는 `packages/django-itda/`(uv workspace 멤버, 임포트 `django_itda`, 자체 `CLAUDE.md`) — 교육 프로젝트가 itda-django, 패키지가 django-itda. 프로젝트 지식은 저장소 안에 자족적으로 둔다(개인 메모리 의존 0).
-- 툴 파라미터의 한글은 리터럴 UTF-8. `\uXXXX` 이스케이프 금지.
-- 스택: Python 3.12+ · uv · Django 5.2 LTS · SQLite · pytest-django · ruff. 8단계 전 외부 서비스 0.
-- **한 단계 = 법 하나.** 단계 경계를 넘는 기능을 미리 넣지 않는다(다음 단계의 "의도적 실패"가 준비된 결함이다 — 고치지 말 것).
-- AI 직원은 고정 fixture. 실제 LLM 호출 코드를 넣지 않는다.
-- `RULES.md`(규칙 대장)는 append-only — 행 삭제 금지, `deprecated` + 후속 버전만.
-- 태그 `stage-NN-start` / `stage-NN-done`. 히스토리 재작성 금지, 태그 이동은 `stages/README.md`에 기록.
-
-## 구현 위임
-
-코드 구현은 `.claude/agents/app-builder.md`(Opus · medium)에 위임한다. 메인 세션 상위 모델로 직접 구현하지 않는다.
-
-## 검증
-
-- 단계 완료 전 `just test NN` 통과 + `stage-NN-start`에서 같은 테스트가 실패하는지 확인.
-- `db.sqlite3`·`.venv`·`.env`는 커밋하지 않는다.
+- 응답·문서·커밋 메시지 한국어 우선. 툴 파라미터의 한글은 리터럴 UTF-8(`\uXXXX` 금지).
+- 프로젝트 지식은 저장소 안에 자족적으로(개인 메모리 의존 0).
+- **fastmcp 의존은 `django_itda/adapters/fastmcp*.py` 에만.** 핵심(판정·궤적·승인 핸들·도구 선언)은 순수 Django.
+- 스택: Python 3.12+ · uv · Django 5.2 LTS · fastmcp 4.x(선택 extra) · pytest-django · ruff.
+- 비목표(README)를 넘는 기능은 넣지 않는다 — 전송·OAuth·스키마 생성은 fastmcp/mcp 것을 쓴다.
+- 이 저장소의 루트가 곧 패키지다(`django_itda/`). 교육 프로젝트는 `examples/itda-django/`(자체 `CLAUDE.md` 가 그쪽 정본)에 uv workspace 멤버로 산다 — `[tool.uv.workspace] members = ["examples/*"]`.
+- 코드 구현은 `.claude/agents/app-builder.md`(Opus · medium)에 위임한다. 메인 세션 상위 모델로 직접 구현하지 않는다.
+- 첫 사용자인 `examples/itda-django/` 의 실접속 트랙에서 실제로 소비되지 않는 API 는 만들지 않는다.
+- 저장소 구조 이력은 [docs/구조-뒤집기-2026-09-06.md](docs/구조-뒤집기-2026-09-06.md).

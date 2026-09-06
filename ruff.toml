@@ -1,6 +1,10 @@
 line-length = 100
 target-version = "py312"
 extend-exclude = ["**/migrations"]
+# 1급(first-party) 모듈 탐색 경로 — 저장소 루트(패키지 django_itda)와 예시 프로젝트.
+# 구조 뒤집기(2026-09-06)로 orders·shop·agent 가 examples/itda-django/ 아래로 내려가서
+# 이 선언이 없으면 isort 가 그것들을 서드파티로 본다.
+src = [".", "examples/itda-django"]
 
 [format]
 quote-style = "single"
