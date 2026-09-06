@@ -9,7 +9,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
 
-from .models import Refund
+from .models import InvalidTransition, Refund
 
 
 def _next_url(request):
@@ -25,7 +25,13 @@ def _next_url(request):
 @permission_required('orders.change_refund', raise_exception=True)
 def approve_refund(request, pk):
     refund = get_object_or_404(Refund, pk=pk)
-    refund.approve(request.user)
+    try:
+        refund.approve(request.user)
+    except InvalidTransition as blocked:
+        # 여기는 사람이 보는 화면이다. 409 화면은 AI 직원이 읽을 판정용이고,
+        # 버튼을 두 번 누른 점주에게 필요한 것은 "이미 지나간 일"이라는 한 줄이다.
+        messages.warning(request, blocked.verdict.reason)
+        return redirect(_next_url(request))
     messages.success(
         request, f'{refund.order.order_number} 환불을 승인했습니다. 주문이 취소로 바뀌었습니다.'
     )
@@ -37,7 +43,11 @@ def approve_refund(request, pk):
 @permission_required('orders.change_refund', raise_exception=True)
 def reject_refund(request, pk):
     refund = get_object_or_404(Refund, pk=pk)
-    refund.reject(request.user, note=request.POST.get('note', ''))
+    try:
+        refund.reject(request.user, note=request.POST.get('note', ''))
+    except InvalidTransition as blocked:
+        messages.warning(request, blocked.verdict.reason)
+        return redirect(_next_url(request))
     messages.info(
         request, f'{refund.order.order_number} 환불을 거부했습니다. 주문 상태는 그대로입니다.'
     )

@@ -36,16 +36,27 @@ def intake_order(customer, lines, shipping):
     return order
 
 
-def propose_refund(actor, order, amount, reason):
+def propose_refund(actor, order, amount, reason, idempotency_key=''):
     """환불을 제안한다. `(Verdict, Outcome)`.
 
-    이미 살아 있는 제안이 있으면 **다시 판정하지 않고** 지금 처리 상태를 답한다.
-    세계가 중복을 막아 주는 것이 아니다 — 여기서 걸러 줄 뿐이고, 그 얘기는 5단계다.
+    **여기서 걸러 주지 않는다.** 4단계에는 "이미 있는지 조회하고 없으면 만든다"는
+    줄이 있었는데, 그 줄은 중복을 막은 것이 아니라 **동시에 오지 않는 요청만**
+    막고 있었다. 조회와 생성 사이에 벌어지는 틈은 애플리케이션이 없앨 수 없다.
+
+    그래서 5단계에서 지웠다. 중복은 세계가 막는다 —
+    `Refund` 의 부분 유일 제약(REFUND-003@v1)이 INSERT 를 거절하고,
+    `Refund.apply` 가 그 거절을 판정으로 번역한다.
+
+    `idempotency_key` 는 클라이언트가 "이건 아까 그 요청이다"라고 말하는 방법이다.
+    주면 재전송에 **그때의 답**이 돌아오고, 안 주면 두 번째 요청은 **지금 상태**를 듣는다.
     """
-    existing = Refund.objects.filter(order=order).exclude(status=Refund.Status.REJECTED).first()
-    if existing:
-        return existing.current_outcome()
-    return Refund.apply(order=order, amount=amount, reason=reason, requested_by=actor)
+    return Refund.apply(
+        order=order,
+        amount=amount,
+        reason=reason,
+        requested_by=actor,
+        idempotency_key=idempotency_key,
+    )
 
 
 def pay_order(order):

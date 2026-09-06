@@ -50,7 +50,7 @@ mcp = FastMCP('hyve-world', instructions=INSTRUCTIONS)
 # --- 세계에 말 걸기 -----------------------------------------------------------
 
 
-def _call(method, path, payload=None, *, report_only=False):
+def _call(method, path, payload=None, *, report_only=False, headers=None):
     """세계를 한 번 두드리고, 대답을 도구 결과 규약으로 옮긴다.
 
     `report_only` 는 **조회 도구용**이다. "지금 어떤 상태냐"고 물었는데 거부된
@@ -63,9 +63,9 @@ def _call(method, path, payload=None, *, report_only=False):
             'just token ai-staff 로 발급해 등록 설정에 넣어라.'
         )
     url = f'{WORLD_URL}{path}'
-    headers = {'Authorization': f'Bearer {WORLD_TOKEN}'}
+    sent = {'Authorization': f'Bearer {WORLD_TOKEN}', **(headers or {})}
     try:
-        response = httpx.request(method, url, json=payload, headers=headers, timeout=10.0)
+        response = httpx.request(method, url, json=payload, headers=sent, timeout=10.0)
     except httpx.RequestError as exc:
         raise ToolError(
             f'세계에 닿지 못했다 — {url} 에 연결할 수 없다({exc.__class__.__name__}). '
@@ -170,18 +170,29 @@ def pay_order(order_id: int) -> dict:
 
 
 @mcp.tool
-def propose_refund(order_id: int, amount: int | None = None, reason: str = '고객 요청') -> dict:
+def propose_refund(
+    order_id: int,
+    amount: int | None = None,
+    reason: str = '고객 요청',
+    request_id: str | None = None,
+) -> dict:
     """환불을 제안한다. `amount` 를 생략하면 전액.
 
     세 갈래로 답이 온다.
     - 규칙이 확정 — 기한 안이고 소액이면 바로 승인된다.
     - 점주 승인 대기 — 5만원을 넘으면 제안만 올라간다(`check_refund` 로 확인).
     - 거부 — 결제 후 7일이 지난 주문은 환불되지 않는다(REFUND-001@v1).
+
+    같은 요청을 다시 보낼 때는 **같은 `request_id`** 를 써라. 새 환불이 아니라
+    그때의 답을 다시 받는다 — `decision` 이 같고 `outcome` 이 `REPLAYED` 다.
+    `request_id` 를 바꿔서 다시 보내면 그건 다른 요청이고, 한 주문에 살아 있는
+    환불은 하나뿐이므로 세계는 기존 건의 **지금 상태**(`ALREADY`)로 답한다.
     """
     payload = {'order_id': order_id, 'reason': reason}
     if amount is not None:
         payload['amount'] = amount
-    return _call('POST', '/api/refunds/', payload)
+    headers = {'Idempotency-Key': request_id} if request_id else None
+    return _call('POST', '/api/refunds/', payload, headers=headers)
 
 
 @mcp.tool

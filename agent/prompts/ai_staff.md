@@ -22,6 +22,7 @@
 3. **이미 결제 완료된 주문을 다시 결제 완료로 만들지 마라.**
    → 코드로 이사됨 (`ORDER-001@v1`, `orders/models.py:Order.mark_paid`)
 4. **같은 환불을 두 번 처리하지 마라. 한 주문에 환불은 한 번이다.**
+   → 코드로 이사됨 (`REFUND-003@v1`, DB 제약 `orders/models.py:Refund.Meta.constraints`)
 
 ## 하지 말아야 할 것
 

@@ -3,7 +3,7 @@
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 
-from .models import Order, OrderItem, Refund
+from .models import InvalidTransition, Order, OrderItem, Refund
 
 
 class OrderItemInline(admin.TabularInline):
@@ -45,7 +45,17 @@ class RefundAdmin(admin.ModelAdmin):
     )
     list_filter = ('status',)
     search_fields = ('order__order_number', 'reason')
-    readonly_fields = ('status', 'requested_by', 'decided_by', 'decided_at', 'created_at')
+    # 멱등키와 저장된 판정도 손으로 못 고친다 — 둘 다 '일어난 일의 기록'이지
+    # 사람이 정하는 값이 아니다. 고칠 수 있으면 재전송의 답이 조작될 수 있다.
+    readonly_fields = (
+        'status',
+        'requested_by',
+        'decided_by',
+        'decided_at',
+        'created_at',
+        'idempotency_key',
+        'verdict',
+    )
     actions = ('approve_selected', 'reject_selected')
 
     @admin.display(description='주문 상태', ordering='order__status')
@@ -60,16 +70,34 @@ class RefundAdmin(admin.ModelAdmin):
 
     @admin.action(description='선택한 환불을 승인', permissions=['change'])
     def approve_selected(self, request, queryset):
-        done = 0
-        for refund in queryset:
-            refund.approve(request.user)
-            done += 1
-        self.message_user(request, f'{done}건을 승인했습니다.', messages.SUCCESS)
+        done, skipped = self._decide(queryset, lambda refund: refund.approve(request.user))
+        self.message_user(request, self._report(done, skipped, '승인'), messages.SUCCESS)
 
     @admin.action(description='선택한 환불을 거부', permissions=['change'])
     def reject_selected(self, request, queryset):
-        done = 0
+        done, skipped = self._decide(queryset, lambda refund: refund.reject(request.user))
+        self.message_user(request, self._report(done, skipped, '거부'), messages.INFO)
+
+    @staticmethod
+    def _decide(queryset, action):
+        """고른 것 중 **확정할 수 있는 것만** 확정하고, 건수를 나눠 돌려준다.
+
+        목록 화면을 띄운 뒤 다른 창에서 이미 처리된 건이 섞여 있을 수 있다.
+        그때 액션 전체를 실패시키면 나머지 건까지 못 넘어간다. 한 건의 조건
+        불일치는 그 건의 사정이므로, 건너뛴 건수를 세어 점주에게 말해 준다.
+        """
+        done = skipped = 0
         for refund in queryset:
-            refund.reject(request.user)
-            done += 1
-        self.message_user(request, f'{done}건을 거부했습니다.', messages.INFO)
+            try:
+                action(refund)
+            except InvalidTransition:
+                skipped += 1
+            else:
+                done += 1
+        return done, skipped
+
+    @staticmethod
+    def _report(done, skipped, label):
+        if not skipped:
+            return f'{done}건을 {label}했습니다.'
+        return f'{done}건 {label}, {skipped}건은 제안 상태가 아니어서 건너뜀.'

@@ -28,7 +28,7 @@ from agent.scenarios import ALICE_CART, ALICE_SHIPPING
 from shop.models import Product
 
 from . import services
-from .models import Order, Refund
+from .models import InvalidTransition, Order, Refund
 from .verdict import Outcome, Verdict
 
 app_name = 'api'
@@ -69,6 +69,7 @@ def refund_json(refund):
         'status': refund.status,
         'status_display': refund.get_status_display(),
         'decided_via': refund.decided_via,
+        'idempotency_key': refund.idempotency_key,
         'check_url': reverse('api:refund-detail', args=[refund.pk]),
     }
 
@@ -235,11 +236,29 @@ def refund_create(request):
         return json_error(400, 'bad_request', 'amount 는 1 이상이어야 합니다.')
 
     reason = str(data.get('reason') or '고객 요청')[:200]
-    verdict, outcome = services.propose_refund(request.user, order, amount, reason)
+    key = _idempotency_key(request, data)
+    if key is None:
+        return json_error(400, 'bad_request', '멱등키는 64자 이하여야 합니다.')
+
+    verdict, outcome = services.propose_refund(request.user, order, amount, reason, key)
     extra = {'outcome': outcome.state, 'order': order_json(order)}
     if outcome.refund is not None:
         extra['refund'] = refund_json(outcome.refund)
+    # REPLAYED 면 상태 코드도 **그때의 판정**의 것이다. `verdict_response` 가
+    # `verdict.status_code` 를 쓰므로 여기서 따로 손댈 것이 없다 — 저장된 판정을
+    # 그대로 들고 왔기 때문에 재전송의 응답이 처음 응답과 같아진다.
     return verdict_response(verdict, **extra)
+
+
+def _idempotency_key(request, data):
+    """재전송 식별자를 읽는다. 헤더가 우선, 없으면 본문. 길면 `None`.
+
+    헤더(`Idempotency-Key`)를 먼저 보는 것은 관례다 — 멱등키는 요청 내용이
+    아니라 요청 그 자체에 붙는 표찰이다. 본문도 받는 것은 curl 로 손으로
+    두드려 보는 학생을 위한 편의다.
+    """
+    key = request.headers.get('Idempotency-Key') or str(data.get('idempotency_key') or '')
+    return key if len(key) <= 64 else None
 
 
 def _find_order(data):
@@ -285,10 +304,16 @@ def refund_approve(request, pk):
     if denied:
         return denied
     refund = get_object_or_404(Refund.objects.select_related('order'), pk=pk)
-    if refund.status != Refund.Status.PROPOSED:
-        verdict, outcome = refund.current_outcome()
-        return verdict_response(verdict, outcome=outcome.state, refund=refund_json(refund))
-    refund.approve(request.user)
+    # 상태를 **먼저 조회해서** 검사하지 않는다. 조회와 확정 사이가 벌어지면
+    # 점주 둘이 동시에 눌렀을 때 둘 다 통과한다(4단계에 남아 있던 check-then-act).
+    # 확정을 먼저 시도하고, 조건에 안 맞으면 세계가 거절한다.
+    try:
+        refund.approve(request.user)
+    except InvalidTransition as blocked:
+        refund.refresh_from_db()
+        return verdict_response(
+            blocked.verdict, outcome=Outcome.ALREADY, refund=refund_json(refund)
+        )
     refund.refresh_from_db()
     return verdict_response(
         Verdict(

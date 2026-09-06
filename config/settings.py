@@ -38,6 +38,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # 가장 바깥에서 예외를 본다 — 잠금 실패를 503 으로 옮긴다(5단계).
+    'config.middleware.WorldBusyMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -79,6 +81,21 @@ DATABASES = {
         # 도메인 판정보다 **먼저** 난다. 그러면 5단계 경합 테스트의 실패가
         # "세계가 못 막았다"인지 "잠금에 걸렸다"인지 구분되지 않는다.
         'TEST': {'NAME': BASE_DIR / '.test_db.sqlite3'},
+        'OPTIONS': {
+            # 잠금 실패의 **빈도를 줄이는** 설정이다. 없애는 것이 아니다.
+            #
+            # - `IMMEDIATE`: 트랜잭션을 열 때부터 쓰기 잠금을 잡는다. DEFERRED 는
+            #   읽고 나서 쓰려 할 때 잠금 승격에 실패하면 기다려 주지 않고
+            #   `database is locked` 를 즉시 돌려준다(admin 액션이 그 모양이다).
+            # - `timeout`: 남이 쥔 잠금을 5초까지 기다린다.
+            # - WAL: 읽는 쪽이 쓰는 쪽을 막지 않는다.
+            #
+            # 그래도 잠금 실패는 남는다. 그래서 `config/middleware.py` 가 그 실패를
+            # 503 으로 번역한다 — 설정은 완화이고, 정직한 응답이 보장이다.
+            'transaction_mode': 'IMMEDIATE',
+            'timeout': 5,
+            'init_command': 'PRAGMA journal_mode=WAL;',
+        },
     }
 }
 

@@ -50,6 +50,20 @@ class Verdict:
             'alternatives': list(self.alternatives),
         }
 
+    @classmethod
+    def from_dict(cls, data):
+        """저장해 둔 판정을 되살린다 — 재전송에 **그때의 답**을 그대로 주기 위해.
+
+        모르는 열쇠는 버린다. 판정의 모양이 나중에 바뀌어도 옛 행이 읽히지
+        않는 일은 없어야 한다 — 장부는 과거를 계속 읽을 수 있어야 한다.
+        """
+        return cls(
+            kind=data['kind'],
+            rule_ids=list(data.get('rule_ids') or []),
+            reason=data.get('reason', ''),
+            alternatives=list(data.get('alternatives') or []),
+        )
+
 
 @dataclass(frozen=True)
 class Outcome:
@@ -59,16 +73,22 @@ class Outcome:
         QUEUED     승인 큐에 올렸다 — 주문은 아직 안 움직였다 (ESCALATE)
         COMMITTED  규칙이 확정했고 주문까지 옮겼다 (ALLOW)
         ALREADY    이미 처리된 건이 있어 그 상태를 그대로 돌려준다
+        REPLAYED   같은 요청이 다시 왔다 — 그때의 답을 다시 준다
 
-    `ALREADY` 가 따로 있는 이유: 같은 요청이 두 번 와도 **다시 판정하는 것**과
-    **지금 상태를 답하는 것**은 다른 일이다. 완전한 멱등 응답 저장은 5단계다 —
-    여기서는 중복을 막지 않고, 다만 답을 정직하게 한다.
+    `ALREADY` 와 `REPLAYED` 는 다른 사건이다. 섞으면 답이 거짓이 된다.
+
+    - `ALREADY` — **다른 요청**인데 이미 처리된 건이 있다. 돌려주는 것은
+      **지금 상태**다. 새 사건을 만들려던 요청이 세계의 현재를 듣는다.
+    - `REPLAYED` — **같은 요청**이 다시 왔다(같은 멱등키). 돌려주는 것은
+      그 요청을 처음 받았을 때 저장해 둔 **그때의 판정**이다. 재시도는
+      새 사건이 아니므로 다시 판정하지 않는다.
     """
 
     NOTHING = 'NOTHING'
     QUEUED = 'QUEUED'
     COMMITTED = 'COMMITTED'
     ALREADY = 'ALREADY'
+    REPLAYED = 'REPLAYED'
 
     state: str
     refund: object = None
