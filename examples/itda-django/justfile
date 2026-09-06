@@ -44,6 +44,10 @@ token USERNAME='ai-staff' NAME='claude-code':
 mcp:
     uv run python agent/live/mcp_server.py
 
+# 실접속 트랙 — 패키지 경로의 MCP 서버(stdio). Django 프로세스 안이라 just run 이 필요 없다
+mcp-pkg:
+    uv run python manage.py mcp_stdio
+
 # DB 를 지우고 세계를 처음부터 다시 심는다
 reset-db:
     rm -f db.sqlite3

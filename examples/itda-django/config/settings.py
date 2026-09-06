@@ -30,6 +30,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # 도구면 패키지 — 궤적(`ToolCall`)과 `manage.py mcp_stdio` 가 여기서 온다.
+    'django_itda',
     # local apps
     'accounts',
     'shop',
@@ -101,6 +103,16 @@ DATABASES = {
 
 
 AUTH_USER_MODEL = 'accounts.User'
+
+# 도구면 — `manage.py mcp_stdio` 가 읽는다.
+#
+# `TOOLSET` 은 선언된 도구 묶음이고, `AUTHENTICATE` 는 원문 열쇠 하나로 자리를
+# 얻는 함수다. 인증 방식은 패키지가 정하지 않는다 — 토큰을 어떻게 세는지는
+# 이 세계의 법(`accounts/models.py`)이다.
+ITDA = {
+    'TOOLSET': 'agent.live.tools.toolset',
+    'AUTHENTICATE': 'accounts.models.APIToken.authenticate',
+}
 
 # AI 직원은 is_staff 가 아니라 admin 로그인 화면을 쓸 수 없다 — 콘솔 로그인으로 보낸다.
 LOGIN_URL = '/agent/login/'
