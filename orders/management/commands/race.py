@@ -14,8 +14,10 @@
   **이 모드는 `db.sqlite3` 를 직접 만진다.** 세계가 더러워지면 `just reset-db` 로
   되돌린다(다른 파일에서 보고 싶으면 `HYVE_DB=/tmp/race.sqlite3` 를 준다).
 - **`--http`** — 확률적이다. 진짜 HTTP 요청 두 개를 Barrier 로 맞춰 쏜다. 창이
-  좁아 매번 겹치지는 않으므로 `--rounds` 로 반복한다. 옆자리 학생의 세계로
-  쏘려면 `--url http://<상대 IP>:8000` (상대는 `just run-shared` 로 띄운다).
+  좁아 매번 겹치지는 않으므로 `--rounds` 로 반복하고, **회차마다 대상을 새로
+  만든다**(`target` 은 장바구니 원본으로 쓴다). 같은 주문에 계속 쏘면 2회차부터는
+  경합과 무관하게 `ALREADY` 가 나와 회차를 세는 의미가 없다. 옆자리 학생의
+  세계로 쏘려면 `--url http://<상대 IP>:8000` (상대는 `just run-shared` 로 띄운다).
 """
 
 import json
@@ -154,50 +156,57 @@ class Command(BaseCommand):
     def _race_http(self, options):
         """진짜 요청 두 개를 맞춰 쏜다. 겹치는 창이 좁아 회차마다 결과가 다르다.
 
+        **회차마다 대상을 새로 만든다.** 같은 주문에 계속 쏘면 2회차부터는
+        이미 처리된 건이 있어 경합과 무관하게 `ALREADY`·409 가 나온다 — 그러면
+        회차를 반복하는 의미가 없다. `target` 은 **장바구니 원본**으로 쓴다.
+        그 주문의 품목을 그대로 새 주문으로 접수하고, 모드에 맞게 결제·제안까지
+        준비한 다음 그 새 대상에 두 요청을 쏜다.
+
+        준비 요청은 AI 직원 자리에서 한다(주문 접수·환불 제안은 그쪽 업무다).
+        경합 요청만 모드의 자리에서 쏜다 — `approve` 는 점주다.
+
         임시 토큰을 발급해 쓰고 끝나면 지운다. 다른 사람의 세계(`--url`)로 쏠 때는
         그쪽에서 받은 열쇠를 `WORLD_TOKEN` 환경변수로 준다 — 내 DB 의 토큰은
-        남의 세계에서 통하지 않는다.
+        남의 세계에서 통하지 않는다(그때는 준비도 그 열쇠로 하므로, 자리가
+        모자라면 준비 단계에서 403 이 그대로 보인다).
         """
         base = options['url'].rstrip('/')
         borrowed = os.environ.get('WORLD_TOKEN', '')
         account = 'owner' if options['mode'] == 'approve' else 'ai-staff'
-        token_row = None
+        issued = []
         if borrowed:
-            token = borrowed
+            setup_token = race_token = borrowed
         else:
-            token_row, token = APIToken.issue(User.objects.get(username=account), 'race(임시)')
+            setup_token = self._issue('ai-staff', issued)
+            race_token = setup_token if account == 'ai-staff' else self._issue(account, issued)
 
         try:
+            items = self._remote_items(base, setup_token, options['target'])
             for round_number in range(1, options['rounds'] + 1):
-                self.stdout.write(f'— {round_number}회차')
-                for _, line in sorted(self._one_http_round(base, token, options)):
+                method, path, payload, subject = self._prepare(base, setup_token, items, options)
+                self.stdout.write(f'— {round_number}회차 ({subject})')
+                lines = self._one_http_round(base, race_token, method, path, payload)
+                for _, line in sorted(lines):
                     self.stdout.write(line)
         finally:
-            if token_row is not None:
-                token_row.delete()
+            for row in issued:
+                row.delete()
 
-    def _one_http_round(self, base, token, options):
-        method, path, payload = self._request_spec(base, token, options)
+    @staticmethod
+    def _issue(username, issued):
+        row, raw = APIToken.issue(User.objects.get(username=username), 'race(임시)')
+        issued.append(row)
+        return raw
+
+    def _one_http_round(self, base, token, method, path, payload):
         barrier = threading.Barrier(2, timeout=10)
         lock = threading.Lock()
         lines = []
 
         def run(index):
-            request = urllib.request.Request(
-                f'{base}{path}',
-                data=json.dumps(payload).encode() if payload is not None else b'',
-                method=method,
-                headers={
-                    'Authorization': f'Bearer {token}',
-                    'Content-Type': 'application/json',
-                },
-            )
             barrier.wait()
             try:
-                with urllib.request.urlopen(request, timeout=10) as response:
-                    status, body = response.status, json.loads(response.read() or b'{}')
-            except urllib.error.HTTPError as error:
-                status, body = error.code, json.loads(error.read() or b'{}')
+                status, body = self._request(base, token, method, path, payload)
             except Exception as exc:  # noqa: BLE001 — 닿지 못한 것도 관찰 대상이다
                 with lock:
                     lines.append((index, f'[{LABELS[index]}] --- {type(exc).__name__}  {exc}'))
@@ -216,29 +225,61 @@ class Command(BaseCommand):
             thread.join(timeout=30)
         return lines
 
-    def _request_spec(self, base, token, options):
-        """무엇을 쏠 것인가. 주문은 **원격 세계의 목록에서** 찾는다.
+    # --- 회차 준비 -----------------------------------------------------------
+
+    def _prepare(self, base, token, items, options):
+        """이번 회차의 대상을 새로 만들고 `(method, path, payload, 설명)` 을 돌려준다."""
+        order = self._post(base, token, '/api/orders/', {'items': items})['order']
+        subject = f'새 주문 {order["order_number"]}'
+        if options['mode'] == 'pay':
+            return 'POST', f'/api/orders/{order["id"]}/pay/', None, subject
+
+        self._post(base, token, f'/api/orders/{order["id"]}/pay/', None)
+        payload = {'order_id': order['id'], 'reason': '경합 관찰'}
+        if options['amount']:
+            payload['amount'] = options['amount']
+        if options['mode'] == 'refund':
+            return 'POST', '/api/refunds/', payload, subject
+
+        refund = self._post(base, token, '/api/refunds/', payload)['refund']
+        return 'POST', f'/api/refunds/{refund["id"]}/approve/', None, f'{subject} · 환불 제안'
+
+    def _remote_items(self, base, token, order_number):
+        """`target` 주문의 품목을 읽어 온다 — 회차마다 같은 장바구니를 다시 쓴다."""
+        pk = self._remote_order_pk(base, token, order_number)
+        _, detail = self._request(base, token, 'GET', f'/api/orders/{pk}/', None)
+        return [
+            {'product': item['product_name'], 'quantity': item['quantity']}
+            for item in detail['items']
+        ]
+
+    def _post(self, base, token, path, payload):
+        status, body = self._request(base, token, 'POST', path, payload)
+        if status not in (200, 201, 202):
+            raise CommandError(f'회차 준비 실패 — {path} 가 HTTP {status} 로 답했다: {body}')
+        return body
+
+    @staticmethod
+    def _request(base, token, method, path, payload):
+        request = urllib.request.Request(
+            f'{base}{path}',
+            data=json.dumps(payload).encode() if payload is not None else b'',
+            method=method,
+            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read() or b'{}')
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read() or b'{}')
+
+    def _remote_order_pk(self, base, token, order_number):
+        """주문은 **원격 세계의 목록에서** 찾는다.
 
         내 DB 의 pk 를 남의 세계에 그대로 쓰면 다른 주문을 건드린다.
         """
-        mode, target = options['mode'], options['target']
-        if mode == 'approve':
-            return 'POST', f'/api/refunds/{self._refund_pk(target)}/approve/', None
-        if mode == 'pay':
-            return 'POST', f'/api/orders/{self._remote_order_pk(base, token, target)}/pay/', None
-        payload = {'order_number': target, 'reason': '경합 관찰'}
-        if options['amount']:
-            payload['amount'] = options['amount']
-        return 'POST', '/api/refunds/', payload
-
-    @staticmethod
-    def _remote_order_pk(base, token, order_number):
-        request = urllib.request.Request(
-            f'{base}/api/orders/', headers={'Authorization': f'Bearer {token}'}
-        )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            orders = json.loads(response.read())['orders']
-        for order in orders:
+        _, body = self._request(base, token, 'GET', '/api/orders/', None)
+        for order in body.get('orders', []):
             if order['order_number'] == order_number:
                 return order['id']
         raise CommandError(f'{base} 의 세계에 주문 {order_number} 이(가) 없다.')

@@ -38,7 +38,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    # 가장 바깥에서 예외를 본다 — 잠금 실패를 503 으로 옮긴다(5단계).
+    # 뷰에서 올라온 잠금 실패를 503 으로 옮긴다(5단계).
     'config.middleware.WorldBusyMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -86,7 +86,7 @@ DATABASES = {
             #
             # - `IMMEDIATE`: 트랜잭션을 열 때부터 쓰기 잠금을 잡는다. DEFERRED 는
             #   읽고 나서 쓰려 할 때 잠금 승격에 실패하면 기다려 주지 않고
-            #   `database is locked` 를 즉시 돌려준다(admin 액션이 그 모양이다).
+            #   `database is locked` 를 즉시 돌려준다.
             # - `timeout`: 남이 쥔 잠금을 5초까지 기다린다.
             # - WAL: 읽는 쪽이 쓰는 쪽을 막지 않는다.
             #

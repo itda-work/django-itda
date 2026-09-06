@@ -4,9 +4,16 @@
 때문이다. 환불 제안은 **INSERT** 라 조건을 걸 행이 없다 — 그래서 이번 법은
 코드가 아니라 **DB 제약**으로 내려간다.
 
-시작 상태(`stage-05-start`)에서는 11개 중 8개가 실패하고 3개가 통과한다.
-통과하는 셋 중 하나(`test_동시_결제_…`)가 이 단계의 소재다. 결제는 버티는데
-환불은 못 버틴다. 왜 다른가.
+시작 상태(`stage-05-start`)에서 21개 중 15개가 실패한다. 통과하는 여섯은
+성격이 셋으로 갈리므로 섞어 세지 않는다.
+
+- **이미 켜진 법** — 동시 결제(4단계 rowcount 계약) · 대장 세 행 보존.
+- **실측·준비 확인** — `select_for_update` 무효 · 테스트 DB 가 파일인지.
+- **회귀 방지** — 스키마 오류가 500 인지 · 열쇠 없는 재신청이 지금 상태를 듣는지.
+  뒤엣것은 시작 상태에서는 서비스 층의 사전 조회가 우연히 같은 답을 주기 때문에
+  통과한다. 그 조회를 걷어낼 때 답이 나빠지지 않는지를 붙잡아 두는 자리다.
+
+첫째가 이 단계의 소재다. 결제는 버티는데 환불은 못 버틴다. 왜 다른가.
 
 ## 스레드가 여기서는 되는 이유 — 네 가지 준비
 
@@ -29,6 +36,7 @@
 
 import json
 import threading
+from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -36,6 +44,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, OperationalError, connection, transaction
 from django.test import Client
+from django.utils import timezone
 
 from accounts.models import APIToken
 from orders import services
@@ -57,6 +66,23 @@ except ImportError:  # 5단계 시작 상태
     REFUND_003 = 'REFUND-003@v1'
 REFUND_003_TEXT = '같은 환불을 두 번 처리하지 마라. 한 주문에 환불은 한 번이다.'
 REPLAYED = getattr(Outcome, 'REPLAYED', 'REPLAYED')
+
+# `stage-04-done` 시점 대장 세 행의 ID·원문·출처. 고정값이다 — 여기를 고쳐야
+# 테스트가 통과한다면, 그건 append-only 대장을 덮어썼다는 뜻이다.
+STAGE_04_ROWS = {
+    REFUND_001: (
+        '결제 후 7일이 지난 주문은 환불하지 마라.',
+        '`agent/prompts/ai_staff.md` 1번 (점주, 2026-09-06)',
+    ),
+    REFUND_002: (
+        '5만원을 초과하는 환불은 반드시 점주 승인을 받아라.',
+        '`agent/prompts/ai_staff.md` 2번 (점주, 2026-09-06)',
+    ),
+    ORDER_001: (
+        '이미 결제 완료된 주문을 다시 결제 완료로 만들지 마라.',
+        '`agent/prompts/ai_staff.md` 3번 (점주, 2026-09-06)',
+    ),
+}
 
 
 # --- 경합 도구 -----------------------------------------------------------------
@@ -170,6 +196,45 @@ def test_살아_있는_환불은_주문당_하나다_DB제약(world, ai):
         )
 
 
+@pytest.mark.django_db
+def test_제안_상태의_중복도_DB가_막는다(world, ai):
+    """조건절이 `approved` 만이면 승인 큐에 같은 주문이 두 번 쌓인다.
+
+    막아야 하는 것은 "확정된 환불이 둘"이 아니라 **살아 있는 환불이 둘**이다.
+    """
+    order = Order.objects.get(order_number='SEED-0002')
+    Refund.objects.create(order=order, amount=54_000, reason='첫 번째', requested_by=ai)
+
+    with pytest.raises(IntegrityError):
+        Refund.objects.create(order=order, amount=54_000, reason='두 번째', requested_by=ai)
+
+
+@pytest.mark.django_db
+def test_거부된_뒤에는_다시_신청할_수_있고_빈_열쇠는_제약_밖이다(world, ai):
+    """**부분** 유일이라는 것이 여기서 갈린다.
+
+    주문 전체에 무조건 유일 제약을 걸면 거부된 건이 있는 주문에는 영영 환불을
+    못 올린다. 거부는 사건의 끝이고 그 뒤의 새 제안은 **다른 사건**이다.
+    빈 열쇠도 마찬가지다 — 열쇠를 안 준 요청 둘을 같은 요청이라고 부를 근거가 없다.
+    """
+    order = Order.objects.get(order_number='SEED-0002')
+    for note in ('첫 번째 거부', '두 번째 거부'):
+        Refund.objects.create(
+            order=order,
+            amount=54_000,
+            reason=note,
+            requested_by=ai,
+            status=Refund.Status.REJECTED,
+            idempotency_key='',
+        )
+
+    verdict, outcome = Refund.apply(order, 54_000, '다시 신청', ai)
+
+    assert outcome.state == Outcome.QUEUED, '거부된 건만 있으면 새 제안이 올라가야 한다.'
+    assert verdict.kind == Verdict.ESCALATE
+    assert Refund.objects.filter(order=order).count() == 3
+
+
 @pytest.mark.django_db(transaction=True)
 def test_동시_제안_두_개_중_하나만_확정된다(world, ai):
     """스레드 둘이 `Refund.decide` 앞에서 만났다가 동시에 출발한다.
@@ -257,6 +322,82 @@ def test_같은_열쇠로_재전송하면_그때의_답을_다시_받는다(worl
 
 
 @pytest.mark.django_db
+def test_같은_열쇠에_다른_금액을_실어도_최초_내용이_이긴다(world, ai):
+    """정책 고정 — **같은 열쇠는 최초 내용 우선**이고, 내용 충돌은 검사하지 않는다.
+
+    열쇠는 요청의 **표찰**이다. 표찰이 같으면 같은 요청이고, 같은 요청에는
+    같은 답이 간다. "금액이 달라졌으니 다른 요청 아닌가"는 다른 정책이고
+    (충돌을 400 으로 되돌려주는 세계도 있다) 그쪽을 고르지 않았을 뿐이다.
+    어느 쪽이든 **고르고 적어야** 하는 계약이라 테스트로 못 박아 둔다.
+    """
+    _, token = APIToken.issue(ai, 'live')
+    order = Order.objects.get(order_number='SEED-0002')
+    client = Client()
+    key = {'HTTP_IDEMPOTENCY_KEY': 'k-충돌'}
+
+    first = post(client, REFUNDS_URL, token, headers=key, order_id=order.pk)
+    second = post(client, REFUNDS_URL, token, headers=key, order_id=order.pk, amount=30_000)
+
+    assert second.status_code == 202, '30,000원으로 새로 판정했다면 200 ALLOW 였을 것이다.'
+    assert second.json()['outcome'] == REPLAYED
+    assert second.json()['refund']['amount'] == first.json()['refund']['amount'] == 54_000
+    assert second.json()['rule_ids'] == [REFUND_002]
+    assert Refund.objects.filter(order=order).count() == 1
+
+
+@pytest.mark.django_db
+def test_승인된_뒤_기한이_지나도_같은_열쇠는_그때의_답을_받는다(world, ai, owner):
+    """**일어난 일은 일어난 일이다.** 재전송은 다시 허가를 구하는 것이 아니다.
+
+    저장된 사건의 재생이 신규 판정보다 뒤에 있으면 이런 일이 난다 — 점주가
+    승인까지 끝낸 건에 같은 열쇠로 재전송했더니, 그 사이 7일이 지났다는
+    이유로 "기한 초과라 거부합니다"(409 DENY)가 돌아온다. 이미 환불된 건을
+    신규 기한 초과 요청처럼 설명하는 것이라 명백한 거짓말이다.
+
+    재생 범위도 여기서 고정한다 — 돌아오는 것은 **저장된 판정과 그 판정의
+    HTTP 코드**이고, 함께 실리는 객체 상태는 **지금 값**이다.
+    """
+    _, ai_token = APIToken.issue(ai, 'live')
+    _, owner_token = APIToken.issue(owner, 'live')
+    order = Order.objects.get(order_number='SEED-0002')
+    client = Client()
+    key = {'HTTP_IDEMPOTENCY_KEY': 'k9'}
+
+    first = post(client, REFUNDS_URL, ai_token, headers=key, order_id=order.pk)
+    refund_id = first.json()['refund']['id']
+    client.post(f'{REFUNDS_URL}{refund_id}/approve/', **auth(owner_token))
+
+    later = timezone.now() + timedelta(days=8)
+    with mock.patch('orders.models.timezone.now', return_value=later):
+        again = post(client, REFUNDS_URL, ai_token, headers=key, order_id=order.pk)
+
+    body = again.json()
+    assert again.status_code == 202, f'그때의 판정(ESCALATE)의 코드여야 한다: {body}'
+    assert body['outcome'] == REPLAYED
+    assert body['rule_ids'] == [REFUND_002], '기한 초과로 재판정하면 안 된다.'
+    assert body['refund']['id'] == refund_id
+    assert body['refund']['status'] == Refund.Status.APPROVED, '객체 상태는 지금 값이다.'
+
+
+@pytest.mark.django_db
+def test_열쇠_없이_기한이_지난_뒤_다시_신청하면_지금_상태를_듣는다(world, ai):
+    """열쇠가 없어도 마찬가지다 — 살아 있는 환불이 신규 판정보다 앞에 있다.
+
+    돌아오는 것은 `ALREADY` + 지금 상태이지 `REFUND-001@v1` 거부가 아니다.
+    """
+    order = Order.objects.get(order_number='SEED-0003')
+    Refund.apply(order, 30_000, '사이즈 불일치', ai)
+
+    later = timezone.now() + timedelta(days=10)
+    with mock.patch('orders.models.timezone.now', return_value=later):
+        verdict, outcome = services.propose_refund(ai, order, 30_000, '다시 보냄')
+
+    assert outcome.state == Outcome.ALREADY
+    assert REFUND_001 not in verdict.rule_ids, '이미 환불된 건을 기한 초과로 거부하면 안 된다.'
+    assert Refund.objects.filter(order=order).count() == 1
+
+
+@pytest.mark.django_db
 def test_다른_열쇠의_두_번째_요청은_새_환불이_아니다(world, ai):
     """열쇠가 다르면 재전송이 아니다 — 그래도 살아 있는 환불은 주문당 하나다.
 
@@ -313,14 +454,96 @@ def test_점주_둘이_동시에_승인하면_하나만_확정된다_HTTP(world,
 
     def worker(index):
         response = Client().post(f'{REFUNDS_URL}{refund_pk}/approve/', **auth(tokens[index]))
-        return response.status_code
+        return response.status_code, response.json().get('rule_ids', [])
 
     results = _race(worker, Refund, 'approve')
 
-    assert sorted(results) == [200, 409], f'하나는 확정, 하나는 조건 불일치여야 한다: {results}'
+    codes = sorted(code for code, _ in results)
+    assert codes == [200, 409], f'하나는 확정, 하나는 조건 불일치여야 한다: {results}'
+    loser = [rules for code, rules in results if code == 409][0]
+    assert REFUND_003 in loser, f'패자도 규칙 ID 를 들고 돌아와야 한다: {loser}'
     refund = Refund.objects.get(pk=refund_pk)
     assert refund.status == Refund.Status.APPROVED
     assert refund.decided_via == Refund.Via.OWNER
+    assert Refund.objects.filter(decided_at__isnull=False).count() == 1, (
+        '패자가 결정 시각을 덮어쓰면 안 된다 — 확정한 사건은 하나다.'
+    )
+
+
+@pytest.mark.django_db
+def test_거부한_뒤_승인도_막힌다(world, ai, owner):
+    """계약은 방향을 가리지 않는다 — 확정은 **제안 상태에서만**이다.
+
+    승인 뒤 거부만 막고 거부 뒤 승인을 열어 두면, 점주가 순서만 바꿔 누르면
+    같은 거짓말이 생긴다.
+    """
+    order = Order.objects.get(order_number='SEED-0002')
+    _, outcome = Refund.apply(order, 54_000, '사이즈 불일치', ai)
+    refund = outcome.refund
+    refund.reject(owner, note='재고 확인함')
+
+    with pytest.raises(InvalidTransition) as caught:
+        refund.approve(owner)
+
+    assert REFUND_003 in caught.value.verdict.rule_ids
+    refund.refresh_from_db()
+    assert refund.status == Refund.Status.REJECTED
+    order.refresh_from_db()
+    assert order.status == Order.Status.PAID, '거부된 건이 주문을 취소시키면 안 된다.'
+
+
+@pytest.mark.django_db
+def test_콘솔에서_승인을_두_번_누르면_경고가_뜬다(world, ai, owner):
+    """같은 계약을 HTML 화면도 받는다 — 다만 표현이 다르다.
+
+    409 화면은 AI 직원이 읽을 판정용이고, 버튼을 두 번 누른 점주에게 필요한 것은
+    "이미 지나간 일"이라는 한 줄이다. 그래서 `messages.warning` 이다.
+    """
+    order = Order.objects.get(order_number='SEED-0002')
+    _, outcome = Refund.apply(order, 54_000, '사이즈 불일치', ai)
+    url = f'/orders/refunds/{outcome.refund.pk}/approve/'
+    client = Client()
+    assert client.login(username='owner', password='owner1234')
+
+    client.post(url)
+    second = client.post(url, follow=True)
+
+    texts = [str(message) for message in second.context['messages']]
+    assert any(REFUND_003 in text for text in texts), f'경고에 규칙 ID 가 있어야 한다: {texts}'
+    assert Refund.objects.get(pk=outcome.refund.pk).status == Refund.Status.APPROVED
+
+
+@pytest.mark.django_db
+def test_admin_액션은_확정할_수_있는_것만_확정하고_건수를_나눠_말한다(world, ai, owner):
+    """승인 큐에서 여러 건을 한 번에 고르면, 그중 이미 지나간 건이 섞일 수 있다.
+
+    액션 전체를 실패시키면 나머지 건까지 못 넘어간다. 한 건의 조건 불일치는
+    그 건의 사정이므로, 건너뛴 건수를 세어 점주에게 말해 준다.
+    """
+    queued = Refund.apply(
+        Order.objects.get(order_number='SEED-0002'), 54_000, '대기 중', ai
+    )[1].refund
+    settled = Refund.apply(
+        Order.objects.get(order_number='SEED-0003'), 30_000, '이미 확정', ai
+    )[1].refund
+    assert settled.status == Refund.Status.APPROVED
+    client = Client()
+    assert client.login(username='owner', password='owner1234')
+
+    response = client.post(
+        '/admin/orders/refund/',
+        {
+            'action': 'approve_selected',
+            '_selected_action': [str(queued.pk), str(settled.pk)],
+            'index': '0',
+        },
+        follow=True,
+    )
+
+    texts = [str(message) for message in response.context['messages']]
+    assert '1건 승인, 1건은 제안 상태가 아니어서 건너뜀.' in texts, texts
+    queued.refresh_from_db()
+    assert queued.status == Refund.Status.APPROVED
 
 
 # --- 4. 잠금 실패는 판정이 아니다 -----------------------------------------------
@@ -355,6 +578,28 @@ def test_잠금_실패는_거부가_아니다_503(world, ai):
     assert order.status == Order.Status.PENDING
 
 
+@pytest.mark.django_db
+def test_스키마_오류는_잠금이_아니다_500(world, ai):
+    """`OperationalError` 라는 것만으로는 "다시 보내라"의 근거가 못 된다.
+
+    `no such table: busy_orders` 도 `OperationalError` 이고 메시지에 `busy` 가
+    들어 있다. 부분 문자열로 세면 **스키마 오류를 재시도 가능한 잠금으로
+    번역**하게 되고, 클라이언트는 영원히 다시 보낸다. 그래서 판별은 SQLite
+    오류 코드(`SQLITE_BUSY`·`SQLITE_LOCKED`)를 먼저 보고, 코드가 없을 때만
+    알려진 **정확한 메시지**와 대조한다.
+    """
+    _, token = APIToken.issue(ai, 'live')
+    order = Order.objects.get(order_number='SEED-0004')
+    client = Client(raise_request_exception=False)
+
+    with mock.patch(
+        'orders.services.pay_order', side_effect=OperationalError('no such table: busy_orders')
+    ):
+        response = client.post(f'{ORDERS_URL}{order.pk}/pay/', **auth(token))
+
+    assert response.status_code == 500, '고장은 고장이다 — 503 으로 감싸면 안 된다.'
+
+
 # --- 5. 실측: 잠갔다고 믿는 잠금 · 준비 확인 -------------------------------------
 
 
@@ -366,7 +611,11 @@ def test_select_for_update는_SQLite에서_아무것도_잠그지_않는다(worl
     `has_select_for_update = False` 라 그냥 평범한 SELECT 가 나간다.
     "잠갔다고 믿는데 안 잠긴 잠금"이 이 단계에서 실측하는 것 하나다.
 
-    PostgreSQL 이면 행 잠금이 걸린다. 그건 8단계 전에는 확인할 수 없다
+    이 시험이 말하는 것은 **`FOR UPDATE` 행 잠금이 붙지 않는다**까지다.
+    "아무 잠금도 없다"가 아니다 — 트랜잭션 자체의 쓰기 잠금(`IMMEDIATE`)은
+    따로 걸리고, 그건 행 단위가 아니라 DB 단위다. 둘은 다른 층이다.
+
+    PostgreSQL 이면 진짜 행 잠금이 걸린다. 그건 8단계 전에는 확인할 수 없다
     (이 과정은 8단계까지 외부 서비스 0이다).
     """
     assert connection.features.has_select_for_update is False
@@ -396,15 +645,36 @@ def _ledger():
     return (Path(__file__).resolve().parent.parent / 'RULES.md').read_text(encoding='utf-8')
 
 
-def test_규칙_대장에_REFUND_003이_있고_앞_행은_그대로다():
-    """대장은 append-only 다. 새 행이 늘어도 앞 행의 원문은 한 글자도 안 바뀐다."""
+def _row(ledger, rule_id):
+    """대장에서 그 ID 의 행 하나를 찾아 셀 목록으로 돌려준다."""
+    rows = [line for line in ledger.splitlines() if line.startswith(f'| `{rule_id}`')]
+    assert len(rows) == 1, f'{rule_id} 행이 {len(rows)}개다 — 대장의 ID 는 유일해야 한다.'
+    return [cell.strip() for cell in rows[0].strip('|').split('|')]
+
+
+def test_규칙_대장에_REFUND_003_행이_있다():
+    """새 법은 대장에 남는다. 코드만 고치고 대장을 안 쓰면 반쪽이다."""
+    cells = _row(_ledger(), REFUND_003)
+
+    assert cells[1] == REFUND_003_TEXT, '점주가 말한 원문 그대로여야 한다.'
+    assert cells[6] == 'active'
+    assert 'Refund.apply' in cells[7], '멱등 면의 적용 경로가 한정돼 있어야 한다.'
+    assert '평생 한 번' in cells[7], 'DB 가 지키는 범위를 한정해 적어야 한다.'
+
+
+def test_4단계_세_행은_ID_원문_출처까지_그대로다():
+    """대장은 **삭제 금지·내용 보존** 대장이다.
+
+    원문이 문서 어딘가에 있는지만 보면 부족하다 — 행이 통째로 사라지고
+    본문에 문장만 남아 있어도 통과해 버린다. 그래서 기준 태그(`stage-04-done`)
+    시점의 **ID·원문·출처 세 칸**을 고정값으로 박아 두고 비교한다.
+    바꿔야 할 상황이면 그건 새 버전(`@v2`)이지 덮어쓰기가 아니다.
+    """
     ledger = _ledger()
 
-    rows = [line for line in ledger.splitlines() if line.startswith(f'| `{REFUND_003}`')]
-    assert len(rows) == 1, f'{REFUND_003} 행이 {len(rows)}개다 — 대장의 ID 는 유일해야 한다.'
-    assert REFUND_003_TEXT in ledger, '점주가 말한 원문이 대장에 그대로 있어야 한다.'
-
-    for rule_id in (REFUND_001, REFUND_002, ORDER_001):
-        assert RULE_TEXTS[rule_id] in ledger, (
-            f'{rule_id} 의 원문이 바뀌었다 — 대장은 삭제·수정 금지다.'
-        )
+    for rule_id, (text, source) in STAGE_04_ROWS.items():
+        cells = _row(ledger, rule_id)
+        assert cells[0] == f'`{rule_id}`'
+        assert cells[1] == text, f'{rule_id} 의 원문이 바뀌었다.'
+        assert cells[2] == source, f'{rule_id} 의 출처가 바뀌었다 — 배후의 사람이 사라진다.'
+        assert RULE_TEXTS[rule_id] == text, '코드의 원문과 대장의 원문이 갈라졌다.'

@@ -295,10 +295,28 @@ class Refund(models.Model):
         **판정과 결과는 다른 값이다.** ALLOW 는 "허용된다"까지고, 세계가 실제로
         움직였는지는 Outcome 이 말한다.
 
+        순서가 계약이다 — **이미 있는 사건을 먼저 본다.**
+
+        1. 같은 열쇠의 행이 있으면 그때의 판정을 재생한다(REPLAYED).
+        2. 살아 있는 환불이 있으면 지금 상태를 답한다(ALREADY).
+        3. 없으면 판정하고, 판정대로 쓴다.
+
+        1·2 를 3 보다 먼저 두지 않으면 **이미 처리된 사건이 신규 요청처럼
+        재판정된다.** 승인까지 끝난 건에 같은 열쇠로 재전송했을 때 그 사이
+        7일이 지났다는 이유로 "기한 초과라 거부합니다"가 나가는 식이다.
+        일어난 일은 일어난 일이고, 재전송은 그 사실을 다시 묻는 것이지
+        새로 허가를 구하는 것이 아니다.
+
+        **이 조회는 막는 장치가 아니다.** 경합에서는 두 요청이 조회를 나란히
+        통과한다 — 그래서 4단계의 사전 조회는 중복을 못 막았다. 막는 것은
+        `Meta.constraints` 의 부분 유일 제약이고, 이 조회가 하는 일은 "이미
+        답이 있는 질문에 정직하게 답하는 것"뿐이다. 조회를 통과해 버린 요청은
+        INSERT 에서 걸리고, `_resolve_collision` 이 같은 두 답으로 번역한다.
+
         DENY 면 아무것도 만들지 않는다 — 거부된 요청은 승인 큐를 더럽히지 않는다.
-        판정도 저장하지 않는다. 그래서 같은 열쇠로 다시 오면 **다시 판정한다**.
-        같은 입력이면 같은 답이 나오고, 답이 달라지는 경우는 하나뿐이다 —
-        그 사이에 7일 경계를 넘긴 것. 그때는 새 판정이 정직한 답이다.
+        **판정도 저장하지 않는다.** 그래서 같은 열쇠로 다시 오면 그때의 답이 아니라
+        **현재 조건으로 새 판정**을 한다. 동일한 본문은 보장하지 않는다(경과 시간이
+        사유 문장에 들어가므로 글자 단위로는 대개 달라진다).
         ALLOW 면 규칙이 확정한다(`decided_via='rule'`). 사람이 확정한 것과는
         다른 사건이므로 구분해 남긴다(7단계 장부의 소재).
 
@@ -306,14 +324,13 @@ class Refund(models.Model):
         실패하면 승인된 환불만 남고 주문은 안 취소된 상태가 생기는데, 그건
         "판정은 있었는데 세계는 반쪽만 움직인" 상태라 있어서는 안 된다.
 
-        그리고 이 메서드의 모양이 5단계에서 **뒤집혔다.** 4단계는 "있는지 물어보고
-        없으면 만든다"(check-then-act)였고, 지금은 **"만들고, 실패하면 왜 실패했는지
-        물어본다"**(act-then-check)다. 물어보고 쓰는 사이에 벌어지는 틈이 없어야
-        하는데, 그 틈을 없앨 수 있는 것은 애플리케이션이 아니라 DB 다.
-
         `IntegrityError` 는 반드시 `atomic()` **블록 바깥에서** 잡는다. 안에서 잡고
         계속 쓰면 이미 깨진 트랜잭션 위에서 쿼리를 날리게 된다.
         """
+        known = cls._existing_outcome(order, idempotency_key)
+        if known is not None:
+            return known
+
         verdict = cls.decide(order, amount, requested_by)
         if verdict.kind == Verdict.DENY:
             return verdict, Outcome(state=Outcome.NOTHING)
@@ -336,17 +353,18 @@ class Refund(models.Model):
             return cls._resolve_collision(order, idempotency_key, collision)
 
     @classmethod
-    def _resolve_collision(cls, order, idempotency_key, collision):
-        """INSERT 가 제약에 걸렸다. **왜** 걸렸는지는 세계에 다시 물어서 답한다.
+    def _existing_outcome(cls, order, idempotency_key):
+        """이 주문에 **이미 있는 사건**이 있으면 그 답을, 없으면 `None`.
 
-        두 대답이 있고, 둘은 다른 사건이다.
+        두 답이 있고, 둘은 다른 사건이다.
 
-        - 같은 열쇠의 행이 있다 → 재전송이다. 그때의 판정을 그대로 준다(REPLAYED).
-        - 아니면 살아 있는 환불이 있다 → 다른 요청인데 이미 처리된 건이 있다.
-          지금 상태를 준다(ALREADY).
-
-        둘 다 아닌데 제약에 걸렸다면 우리가 모르는 이유다. **삼키지 않는다** —
-        모르는 실패를 도메인 답으로 번역하면 그게 거짓말의 시작이다.
+        - 같은 열쇠의 행이 있다 → **재전송**이다. 그때의 판정을 준다(REPLAYED).
+          같은 열쇠에 다른 금액이 실려 와도 **최초 내용이 이긴다** — 열쇠는
+          요청의 표찰이고, 표찰이 같으면 같은 요청이다. 내용 충돌은 검사하지
+          않는다(그 정책을 고르는 것도 설계 선택이고, 여기서는 이쪽을 골랐다).
+        - 아니면 살아 있는 환불이 있다 → **다른 요청**인데 이미 처리된 건이 있다.
+          지금 상태를 준다(ALREADY). 이 답은 저장하지 않는다 — 답을 만든 사건이
+          없기 때문이다.
         """
         if idempotency_key:
             replayed = cls.objects.filter(
@@ -357,6 +375,24 @@ class Refund(models.Model):
         live = cls.objects.filter(order=order).exclude(status=cls.Status.REJECTED).first()
         if live is not None:
             return live.current_outcome()
+        return None
+
+    @classmethod
+    def _resolve_collision(cls, order, idempotency_key, collision):
+        """INSERT 가 제약에 걸렸다 — 조회와 생성 사이에 다른 요청이 지나갔다.
+
+        답은 조회했을 때와 같은 두 갈래여야 한다. 늦게 도착했다는 이유로 다른
+        말을 들으면, 같은 요청이 타이밍에 따라 다른 답을 받는 셈이다.
+
+        분류는 **기존 행의 존재**로 한다. 예외 자체를 뜯어 어느 제약에 걸렸는지
+        보지 않는다 — SQLite 의 `IntegrityError` 메시지에 제약 이름이 실리지 않아
+        판별이 불안정하기 때문이다. 그래서 계약을 이렇게 좁혀 둔다:
+        **기존 행이 있으면 그 행으로 답하고, 없으면 원 예외를 그대로 올린다.**
+        기존 행이 있는 상황에서 발생한 별개의 무결성 오류는 이 분류에 가려진다.
+        """
+        found = cls._existing_outcome(order, idempotency_key)
+        if found is not None:
+            return found
         raise collision
 
     def current_outcome(self):
