@@ -28,6 +28,14 @@ test NN='':
 stage NN:
     git checkout stage-{{ NN }}-start
 
+# 경합을 눈으로 본다 — 같은 요청 두 개를 동시에 쏜다 (refund / pay / approve)
+race MODE TARGET *ARGS:
+    uv run python manage.py race {{ MODE }} {{ TARGET }} {{ ARGS }}
+
+# 공유 세계 — 옆자리 학생이 내 세계에 요청을 보낼 수 있게 문을 연다 (5단계)
+run-shared:
+    WORLD_SHARED=1 uv run python manage.py runserver 0.0.0.0:8000
+
 # 실접속 트랙 — API 토큰 발급 (원문 키는 여기서 한 번만 나온다)
 token USERNAME='ai-staff' NAME='claude-code':
     uv run python manage.py issue_token {{ USERNAME }} --name {{ NAME }}
