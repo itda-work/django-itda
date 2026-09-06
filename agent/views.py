@@ -9,12 +9,12 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
-from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from orders.models import InvalidTransition, Order, OrderItem, Refund
+from orders import services
+from orders.api import verdict_response
+from orders.models import Order, Refund
 from orders.verdict import Outcome, Verdict
 from shop.models import Product
 
@@ -115,44 +115,21 @@ def _require(request, perm):
         raise PermissionDenied(f'{perm} 권한이 없습니다.')
 
 
-@transaction.atomic
 def _intake_order(actor):
-    alice = get_object_or_404(User, username='alice')
+    """fixture 장바구니를 실제 접수 동작(`orders.services`)에 넘긴다.
+
+    시나리오를 고르는 것이 이 함수의 몫이고, 주문을 만드는 것은 서비스 함수의 몫이다.
+    실접속 트랙의 `POST /api/orders/` 도 같은 함수를 부른다.
+    """
+    customer = get_object_or_404(User, username='alice')
     lines = [(Product.objects.get(name=name), quantity) for name, quantity in ALICE_CART]
-    order = Order.objects.create(
-        user=alice,
-        status=Order.Status.PENDING,
-        total_amount=sum(product.price * quantity for product, quantity in lines),
-        **ALICE_SHIPPING,
-    )
-    for product, quantity in lines:
-        OrderItem.objects.create(
-            order=order,
-            product=product,
-            product_name=product.name,
-            unit_price=product.price,
-            quantity=quantity,
-        )
-    return order
+    return services.intake_order(customer, lines, ALICE_SHIPPING)
 
 
 def _propose_refund(actor, bit):
     number, reason = REFUND_TARGETS[bit]
     order = get_object_or_404(Order, order_number=number)
-    existing = (
-        Refund.objects.filter(order=order).exclude(status=Refund.Status.REJECTED).first()
-    )
-    if existing:
-        # 같은 제안을 두 번 올려도 큐가 지저분해지지 않게 콘솔 쪽에서만 걸러 준다.
-        # 세계가 막아 주는 것이 아니다 — 그 얘기는 5단계다.
-        # 다시 판정하지 않고 **지금 처리 상태**를 그대로 답한다.
-        return existing.current_outcome()
-    return Refund.apply(
-        order=order,
-        amount=order.total_amount,
-        reason=reason,
-        requested_by=actor,
-    )
+    return services.propose_refund(actor, order, order.total_amount, reason)
 
 
 def _repay(actor):
@@ -162,29 +139,18 @@ def _repay(actor):
     그런데 '지금 상태에서 갈 수 있는 곳인가'는 권한이 답하지 않는다. 전이 계약이 답한다.
     """
     order = get_object_or_404(Order, order_number=REPAY_TARGET)
-    try:
-        order.mark_paid()
-    except InvalidTransition as denied:
-        return denied.verdict
-    return Verdict(
-        kind=Verdict.ALLOW,
-        reason=f'{order.order_number} 을(를) 결제 완료로 옮겼습니다.',
-    )
+    return services.pay_order(order)
 
 
 def _respond(request, verdict):
     """판정을 밖으로 내보낸다 — 같은 판정, 두 가지 표현.
 
     API(`Accept: application/json`)에는 판정 객체를 그대로 준다. 실접속 트랙의
-    MCP 클라이언트가 읽을 형식이 이것이다.
+    MCP 클라이언트가 읽을 형식이 이것이다(`orders/api.py` 와 같은 함수를 쓴다).
     브라우저에는 ALLOW·ESCALATE 는 콘솔로 되돌리고(PRG), DENY 만 409 화면을 띄운다.
     """
     if 'application/json' in request.headers.get('Accept', ''):
-        return JsonResponse(
-            verdict.as_dict(),
-            status=verdict.status_code,
-            json_dumps_params={'ensure_ascii': False},
-        )
+        return verdict_response(verdict)
     if verdict.kind == Verdict.DENY:
         return render(request, 'agent/denied.html', {'verdict': verdict}, status=409)
     return redirect('agent:console')

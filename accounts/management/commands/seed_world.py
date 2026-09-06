@@ -36,11 +36,15 @@ GROUPS = {
     # change_order 는 있다 — 주문 접수와 결제 처리는 AI 직원의 업무이기 때문이다.
     # 권한은 '누가 손댈 수 있는가'만 답한다. '어떤 상태에서 어디로 갈 수 있는가'는
     # 다른 법의 몫이다(4단계 전이 계약).
+    #
+    # view_refund 는 열람이지 확정이 아니다 — 자기가 올린 제안이 승인됐는지
+    # 물어볼 수 있어야 실접속 트랙의 폴링(`GET /api/refunds/<id>/`)이 성립한다.
     'AI직원': [
         'orders.add_order',
         'orders.view_order',
         'orders.change_order',
         'orders.add_refund',
+        'orders.view_refund',
         'shop.view_product',
     ],
     # 점주는 '확정'한다. change_refund 한 줄이 승인 큐의 액션을 켜는 열쇠다.

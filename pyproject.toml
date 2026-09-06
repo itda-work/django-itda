@@ -7,6 +7,12 @@ dependencies = [
     "django>=5.2,<5.3",
 ]
 
+[project.optional-dependencies]
+live = [
+    "fastmcp>=4,<5",
+    "httpx>=0.28.1",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",
@@ -16,5 +22,5 @@ dev = [
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
-python_files = ["stage_*.py", "test_*.py"]
+python_files = ["stage_*.py", "live_*.py", "test_*.py"]
 testpaths = ["tests"]
