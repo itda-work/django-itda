@@ -28,6 +28,14 @@ test NN='':
 stage NN:
     git checkout stage-{{ NN }}-start
 
+# 실접속 트랙 — API 토큰 발급 (원문 키는 여기서 한 번만 나온다)
+token USERNAME='ai-staff' NAME='claude-code':
+    uv run python manage.py issue_token {{ USERNAME }} --name {{ NAME }}
+
+# 실접속 트랙 — MCP 서버(stdio). 별도 프로세스다. just run 이 떠 있어야 한다
+mcp:
+    uv run python agent/live/mcp_server.py
+
 # DB 를 지우고 세계를 처음부터 다시 심는다
 reset-db:
     rm -f db.sqlite3
