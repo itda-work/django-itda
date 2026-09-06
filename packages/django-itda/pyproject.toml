@@ -1,0 +1,21 @@
+[project]
+name = "django-itda"
+version = "0.0.0"
+description = "Django 앱을 AI 에이전트의 판정 있는 도구면으로 노출하는 패키지 (설계 단계)"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.2,<5.3",
+]
+
+[project.optional-dependencies]
+# fastmcp 의존은 django_itda/adapters/fastmcp*.py 한 모듈에만 둔다 (CLAUDE.md).
+fastmcp = [
+    "fastmcp>=4,<5",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""

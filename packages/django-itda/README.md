@@ -4,7 +4,7 @@
 > 도구 호출 하나하나가 Django의 `request.user`·permission을 1급 입력으로 받아 **ALLOW / DENY / ESCALATE** 3값으로 판정되고, ESCALATE는 사람 승인을 기다리는 핸들이 되며, 모든 호출은 Django ORM에 궤적으로 남는다.
 > 관통 논지 — **제안은 AI, 판정은 세계, 확정은 사람**(격상 건). 사람이 승인한 정책 범위는 규칙이 자동 확정한다.
 
-- 상태: 설계 단계 (2026-09-06). 첫 사용자는 [hyve-django](../itda-work/hyve-django/)(교육용 단계별 실행세계)의 실접속 트랙.
+- 상태: 설계 단계 (2026-09-06). 첫 사용자는 같은 저장소의 교육 프로젝트 [itda-django](../../README.md)(루트)의 실접속 트랙. 2026-09-06 별도 저장소 `~/Apps/django-itda` 에서 `packages/django-itda/` 로 편입(uv workspace 멤버, 임포트 이름 `django_itda`). 두 번째 사용자가 생기거나 배포할 때 디렉터리째 떼어 낸다.
 - 정본 문서: [docs/벤치마킹-MCP-생태계.md](docs/벤치마킹-MCP-생태계.md)(감쌀 것/쓸 것 결정 근거) · [docs/설계.md](docs/설계.md)
 
 ## 무엇을 만드는가 (진짜 공백 — 벤치마킹 §7.3)
