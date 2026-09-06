@@ -52,9 +52,9 @@ just token                    # = manage.py issue_token ai-staff --name claude-c
 ### 3. Claude Code 에 등록한다
 
 ```bash
-claude mcp add hyve-world \
+claude mcp add itda-world \
   --env WORLD_TOKEN=위에서-받은-키 \
-  -- uv --directory /경로/hyve-django run python agent/live/mcp_server.py
+  -- uv --directory /경로/itda-django run python agent/live/mcp_server.py
 ```
 
 `--directory` 에는 이 저장소의 절대 경로를 넣는다. `--env WORLD_URL=…` 로 주소를
@@ -68,10 +68,10 @@ claude mcp add hyve-world \
 ```json
 {
   "mcpServers": {
-    "hyve-world": {
+    "itda-world": {
       "command": "uv",
       "args": [
-        "--directory", "/경로/hyve-django",
+        "--directory", "/경로/itda-django",
         "run", "python", "agent/live/mcp_server.py"
       ],
       "env": {
@@ -196,6 +196,6 @@ Claude 가 **규칙 ID 를 인용해 고객에게 설명하는가**, 아니면 �
 ## 임시 구현이라는 것
 
 `agent/live/mcp_server.py` 는 임시다. 도구면(판정 매핑·승인 핸들·궤적·권한별
-가시성)은 `django-itda` 패키지로 추출될 예정이고, hyve-django 가 그 첫 사용자다.
+가시성)은 `django-itda` 패키지로 추출될 예정이고, itda-django 가 그 첫 사용자다.
 추출되면 이 파일은 "선언에서 도구면을 생성"하는 8단계 코드로 대체된다.
 설계는 [`docs/단계별-설계.md` §3-1](../docs/단계별-설계.md).

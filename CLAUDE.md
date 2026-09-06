@@ -5,7 +5,7 @@ Django 실행세계 교육용 단계별 프로젝트. 설계 정본은 [docs/단
 ## 기본
 
 - 응답·문서·커밋 메시지는 한국어 우선. 코드 주석도 한국어.
-- 위치 `~/Apps/itda-work/hyve-django` (2026-09-06 itda-skills 에서 이동). 프로젝트 지식은 저장소 안에 자족적으로 둔다(개인 메모리 의존 0).
+- 위치 `~/Apps/itda-work/itda-django` (2026-09-06 itda-skills 에서 이동, 같은 날 `hyve-django` 에서 `itda-django` 로 개명). 형제 패키지 `~/Apps/django-itda/`(도구면 패키지)와 이름이 거울상이니 섞지 말 것 — 교육 프로젝트가 itda-django, 패키지가 django-itda. 프로젝트 지식은 저장소 안에 자족적으로 둔다(개인 메모리 의존 0).
 - 툴 파라미터의 한글은 리터럴 UTF-8. `\uXXXX` 이스케이프 금지.
 - 스택: Python 3.12+ · uv · Django 5.2 LTS · SQLite · pytest-django · ruff. 8단계 전 외부 서비스 0.
 - **한 단계 = 법 하나.** 단계 경계를 넘는 기능을 미리 넣지 않는다(다음 단계의 "의도적 실패"가 준비된 결함이다 — 고치지 말 것).

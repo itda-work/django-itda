@@ -1,4 +1,4 @@
-"""hyve-django 설정.
+"""itda-django 설정.
 
 교육용 단계별 프로젝트 — 외부 서비스 없이 SQLite 하나로 돈다.
 설정은 일부러 최소로 둔다. 단계가 올라가며 필요한 법을 하나씩 켠다.
@@ -10,7 +10,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 교육용 로컬 전용 키. 운영에 쓰지 않는다.
-SECRET_KEY = 'django-insecure-hyve-django-교육용-키-운영-사용-금지'
+SECRET_KEY = 'django-insecure-itda-django-교육용-키-운영-사용-금지'
 
 DEBUG = True
 
@@ -73,9 +73,9 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        # 기본은 저장소의 dev DB 하나다. `HYVE_DB` 를 주면 그 파일을 쓴다 —
+        # 기본은 저장소의 dev DB 하나다. `ITDA_DB` 를 주면 그 파일을 쓴다 —
         # 공유 세계·검증용 별도 파일을 관찰 중인 dev DB 와 섞지 않기 위해서다.
-        'NAME': Path(os.environ.get('HYVE_DB') or BASE_DIR / 'db.sqlite3'),
+        'NAME': Path(os.environ.get('ITDA_DB') or BASE_DIR / 'db.sqlite3'),
         # 테스트 DB 를 **파일**로 둔다. 기본값(인메모리 shared-cache)에서는 두
         # 스레드가 같은 테이블을 만지는 순간 `database table is locked` 가
         # 도메인 판정보다 **먼저** 난다. 그러면 5단계 경합 테스트의 실패가

@@ -46,4 +46,4 @@ Herdr 기동 세션의 Claude Code 작업 전반. Orca 등 다른 호스트에�
 
 - 2026-09-05: 초안 (마스터 지시 — "codex 리뷰 등 시각적으로 진행 상황이 보이지 않는 작업은 별도 herdr pane 으로").
   플러그인 재정비(#1648) 검수 Codex 리뷰를 `nohup` 으로 띄워 진행이 안 보였던 것이 계기. 같은 규칙을 hyve ·
-  hyve-training · hyve-django 세 저장소에 동일 본문으로 둔다.
+  hyve-training · itda-django 세 저장소에 동일 본문으로 둔다.

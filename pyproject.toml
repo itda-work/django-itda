@@ -1,5 +1,5 @@
 [project]
-name = "hyve-django"
+name = "itda-django"
 version = "0.1.0"
 description = "실행세계를 단계별로 엿보는 Django 교육용 프로젝트"
 requires-python = ">=3.12"

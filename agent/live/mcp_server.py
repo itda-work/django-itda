@@ -44,7 +44,7 @@ WORLD_TOKEN = os.environ.get('WORLD_TOKEN', '')
 PROMPT_PATH = Path(__file__).resolve().parent.parent / 'prompts' / 'ai_staff.md'
 INSTRUCTIONS = PROMPT_PATH.read_text(encoding='utf-8')
 
-mcp = FastMCP('hyve-world', instructions=INSTRUCTIONS)
+mcp = FastMCP('itda-world', instructions=INSTRUCTIONS)
 
 
 # --- 세계에 말 걸기 -----------------------------------------------------------
@@ -216,5 +216,5 @@ def approve_refund(refund_id: int) -> dict:
 
 
 if __name__ == '__main__':
-    print(f'hyve-world MCP — WORLD_URL={WORLD_URL}', file=sys.stderr)
+    print(f'itda-world MCP — WORLD_URL={WORLD_URL}', file=sys.stderr)
     mcp.run()

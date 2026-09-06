@@ -1,4 +1,4 @@
-# hyve-django — 단계별 실행세계
+# itda-django — 단계별 실행세계
 
 # 명령 목록
 default:
