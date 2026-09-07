@@ -226,15 +226,30 @@ class Toolset:
         푸시는 없다. 그래서 격상된 쪽에 "무엇을 어떻게 물어보면 되는지" 를
         같이 준다: 조회 도구 이름과 대상 ID 다. MCP 스펙의 Tasks 를 쓰지 않는
         폴백 관행이고, 첫 사용자가 실접속에서 이 폴링으로 충분했다.
+
+        도구가 `objects['handle']` 로 **필드를 보탤 수 있다.** 기다리는 방법이
+        폴링뿐이 아니기 때문이다 — 사람이 여는 URL 이 그 첫 사례다(itda-django
+        6단계의 결제 링크: `url`·`expires_at`). 보탠 것이 자동 핸들 위에 얹히므로
+        도구는 `check_tool` 도 덮어쓸 수 있다.
+
+        `pop` 인 이유 — objects 에 남으면 결과의 최상위 `handle` 을 나중에
+        덮어쓴다(`tool_result` 가 objects 를 마지막에 펼친다). 격상이 아니면
+        꺼내서 **버린다**. 핸들은 격상에만 있고, 기다릴 것이 없는 답에 기다리는
+        방법을 실어 보내면 그건 없는 길을 알려 주는 것이다.
         """
-        if verdict.kind != Verdict.ESCALATE or not spec.handle_tool:
+        extra = objects.pop('handle', None)
+        if verdict.kind != Verdict.ESCALATE:
+            return None
+        if not spec.handle_tool and not extra:
             return None
         subject = objects.get(spec.handle_subject) or {}
-        return {
+        handle = {
             'check_tool': spec.handle_tool,
             'id': subject.get('id'),
             'status': subject.get('status'),
         }
+        handle.update(extra or {})
+        return handle
 
     def _record_exception(self, base, started_at, failure):
         """세계가 터졌다. 판정 어휘를 적지 않는다 — 판정에 닿지 못했다."""

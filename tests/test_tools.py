@@ -26,6 +26,27 @@ def toolset():
         """무언가를 제안한다."""
         return ESCALATED, Outcome.QUEUED, {'refund': {'id': 7, 'status': 'proposed'}}
 
+    @world.tool(perm='auth.add_user', handle_tool='check_thing')
+    def propose_link(actor):
+        """핸들에 사람이 열 URL 을 보태는 도구."""
+        return (
+            ESCALATED,
+            Outcome.QUEUED,
+            {
+                'refund': {'id': 7, 'status': 'proposed'},
+                'handle': {'url': 'http://세계/열어라/', 'expires_at': '2026-09-07T12:00:00'},
+            },
+        )
+
+    @world.tool(perm='auth.add_user', handle_tool='check_thing')
+    def settle_thing(actor):
+        """확정하면서도 핸들 필드를 실어 보내는 도구 — 기다릴 것이 없다."""
+        return (
+            Verdict(kind=Verdict.ALLOW),
+            Outcome.COMMITTED,
+            {'refund': {'id': 7, 'status': 'approved'}, 'handle': {'url': 'http://세계/열어라/'}},
+        )
+
     @world.tool(perm='auth.change_user', forbidden_reason='제안까지가 네 자리다')
     def confirm_thing(actor, thing_id: int):
         """무언가를 확정한다."""
@@ -107,6 +128,26 @@ def test_ESCALATE_는_승인_핸들을_받는다(toolset, actor):
     assert result['outcome'] == Outcome.QUEUED
     assert result['handle'] == {'check_tool': 'check_thing', 'id': 7, 'status': 'proposed'}
     assert result['call_id'] == only_call().call_id, '결과와 궤적은 call_id 로 이어진다.'
+
+
+def test_도구가_핸들에_필드를_보탠다(toolset, actor):
+    result = toolset.call('propose_link', actor)
+
+    assert result['handle'] == {
+        'check_tool': 'check_thing',
+        'id': 7,
+        'status': 'proposed',
+        'url': 'http://세계/열어라/',
+        'expires_at': '2026-09-07T12:00:00',
+    }, '자동 핸들 위에 도구가 보탠 것이 얹힌다 — 최상위 handle 은 하나다.'
+    assert 'handle' not in result['refund'], '보탠 것은 objects 에서 빠진다.'
+
+
+def test_격상이_아니면_핸들은_없다(toolset, actor):
+    result = toolset.call('settle_thing', actor)
+
+    assert result['handle'] is None, '기다릴 것이 없는 답에 기다리는 방법을 싣지 않는다.'
+    assert result['refund'] == {'id': 7, 'status': 'approved'}
 
 
 def test_실행_도구의_DENY_는_오류다(toolset, actor):
