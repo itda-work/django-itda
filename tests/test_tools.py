@@ -4,10 +4,13 @@
 한 줄도 하지 않는다는 것이 여기서 확인된다.
 """
 
+import dataclasses
+
 import pytest
 from django.contrib.auth.models import Permission, User
 from django.db import OperationalError
 
+from django_itda.context import current_call
 from django_itda.models import ToolCall
 from django_itda.results import ToolBusy, ToolDenied
 from django_itda.tools import Toolset
@@ -66,6 +69,11 @@ def toolset():
     def list_things(actor):
         """판정 없는 순수 조회."""
         return {'things': [1, 2]}
+
+    @world.tool(query=True)
+    def peek_context(actor):
+        """도구 본문에서 호출 문맥을 들여다본다(v0.2)."""
+        return {'context': dataclasses.asdict(current_call()) | {'actor': None}}
 
     @world.tool
     def break_thing(actor, how: str = 'lock'):
@@ -234,3 +242,33 @@ def test_시그니처에서_자리를_뗄_수_있다(toolset):
 
     assert list(parameters) == ['amount', 'note']
     assert parameters['note'].default == '메모'
+
+
+# --- 문맥 (v0.2) ----------------------------------------------------------------
+
+
+def test_도구_본문은_호출_문맥_안에서_돈다(toolset, actor):
+    """도메인 코드가 `call_id` 를 인자로 받지 않고도 궤적과 같은 값을 읽는다.
+
+    도메인 장부(itda-django 7단계 `ledger.Event`)가 이것으로 도구면 궤적과
+    잇닿는다 — 같은 호출의 두 층이 같은 상관 ID 를 갖는다.
+    """
+    result = toolset.call('peek_context', actor, via=ToolCall.Via.ADMIN)
+
+    assert result['context']['call_id'] == result['call_id'] == only_call().call_id
+    assert result['context']['via'] == ToolCall.Via.ADMIN
+
+
+def test_호출이_끝나면_문맥은_풀린다(toolset, actor):
+    toolset.call('peek_context', actor)
+
+    assert current_call().call_id == ''
+    assert current_call().via == 'shell'
+
+
+def test_거부된_호출은_문맥을_열지_않는다(toolset, db):
+    """권한이 없으면 본문에 닿지 못한다 — 열리지 않은 문의 문맥도 없다."""
+    with pytest.raises(ToolDenied):
+        toolset.call('propose_thing', None)
+
+    assert current_call().call_id == ''

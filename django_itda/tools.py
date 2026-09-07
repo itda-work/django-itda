@@ -4,12 +4,16 @@
 MCP 스키마가 된다 — 스키마를 손으로 쓰지 않고, 생성은 fastmcp 것을 쓴다
 (`adapters/fastmcp.py`). 여기서 정하는 것은 스키마가 아니라 **호출 경로**다.
 
-    권한 → 실행 → 매핑 → 기록
+    권한 → 문맥 → 실행 → 매핑 → 기록
 
 첫 인자는 언제나 `actor` 다. 자리 없이 부를 수 있는 도구를 만들지 않기 위해서고,
 자리를 인자 목록의 맨 앞에 둔 것은 그것이 도구의 **첫 번째 질문**이기 때문이다 —
 "무엇을 할 것인가" 보다 "누가 하는가" 가 먼저다. MCP 로 나갈 때 이 인자는
 어댑터가 떼어 낸다. 모델은 자기 자리를 고를 수 없다.
+
+실행을 **호출 문맥**으로 감싼다(`context.bind_call`). 도구 본문이 부르는 도메인
+코드는 자기가 어느 문으로 불렸는지 인자로 받지 않고 `current_call()` 로 읽는다 —
+그래야 도메인 장부의 `call_id` 가 이 호출의 궤적과 같은 값이 된다.
 
 판정은 한 줄도 하지 않는다. 도구 본문이 도메인 서비스 함수를 부르고
 `(판정, 결과 상태, 객체들)` 을 돌려주면, 이 모듈은 그것을 한 모양으로 옮기고
@@ -24,6 +28,7 @@ from django.db import OperationalError
 from django.utils import timezone
 
 from .busy import is_lock_failure
+from .context import bind_call
 from .models import ToolCall
 from .results import ToolBusy, ToolDenied, tool_result
 from .trajectory import elapsed_ms, new_call_id, record
@@ -165,7 +170,12 @@ class Toolset:
             raise denied
 
         try:
-            returned = spec.fn(actor, **args)
+            # 도구 본문이 부르는 서비스·모델이 장부를 적으면 **이 호출 ID** 가
+            # 실린다. 도구면 궤적(`ToolCall`)과 도메인 장부가 잇닿는 지점이고,
+            # 자리를 같이 묶는 것은 문맥을 읽는 쪽이 도구의 인자 목록을
+            # 다시 뒤지지 않게 하기 위해서다.
+            with bind_call(call_id, via, actor):
+                returned = spec.fn(actor, **args)
         except OperationalError as failure:
             if not is_lock_failure(failure):
                 self._record_exception(base, started_at, failure)
