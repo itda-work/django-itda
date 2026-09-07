@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>403 — 세계가 거부했다</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>403 — 권한이 없습니다</title>
+  <style>
+    body { font-family: system-ui, sans-serif; color: #1f2933; margin: 0; }
+    .box { max-width: 30rem; margin: 6rem auto; padding: 0 1.5rem; }
+    h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+    p { color: #52606d; margin: 0 0 1.5rem; }
+    a { color: #1f2933; margin-right: 1rem; }
+  </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
-  <div class="mx-auto mt-24 max-w-lg rounded-xl border-2 border-rose-300 bg-white p-8 text-center shadow-sm">
-    <p class="text-5xl font-black text-rose-600">403</p>
-    <h1 class="mt-3 text-xl font-bold">세계가 거부했다</h1>
-    <p class="mt-2 text-slate-600">권한이 없다.</p>
-    <p class="mt-6 text-sm text-slate-500">
-      화면에서 버튼을 숨긴 것이 아니다. 요청은 서버까지 갔고, 서버가 끊었다.<br>
-      아무것도 바뀌지 않았다 — 주문도, 환불도 그대로다.
-    </p>
-    <a href="/agent/" class="mt-6 inline-block rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
-      콘솔로 돌아가기
-    </a>
+<body>
+  <div class="box">
+    <h1>403 — 권한이 없습니다</h1>
+    <p>이 페이지를 볼 권한이 없습니다.</p>
+    <a href="javascript:history.back()">돌아가기</a>
+    <a href="/admin/">admin 으로</a>
   </div>
 </body>
 </html>

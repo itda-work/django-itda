@@ -8,6 +8,9 @@
 from django.contrib import admin
 from django.urls import include, path
 
+# 403 화면은 두 자리로 갈린다 — 콘솔은 세계의 목소리, 그 외는 일반 403(`config/views.py`).
+handler403 = 'config.views.permission_denied'
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('agent/', include('agent.urls')),
