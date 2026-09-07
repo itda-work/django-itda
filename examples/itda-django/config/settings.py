@@ -37,11 +37,17 @@ INSTALLED_APPS = [
     'shop',
     'orders',
     'agent',
+    # 장부 — 세계가 움직인 사실이 남는 자리(7단계). 궤적(`django_itda`)과 다른 층이다.
+    'ledger',
 ]
 
 MIDDLEWARE = [
     # 뷰에서 올라온 잠금 실패를 503 으로 옮긴다(5단계).
     'config.middleware.WorldBusyMiddleware',
+    # 요청 하나 = 호출 하나. `call_id`·`via` 를 문맥에 묶는다(7단계, django-itda v0.2).
+    # 여기서 묶어야 도메인 장부가 "어느 문으로 들어온 요청이 이 사실을 만들었나" 에
+    # 답할 수 있다 — 전이 메서드는 요청을 모르고, 알아서도 안 된다.
+    'django_itda.middleware.CallContextMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -120,9 +126,18 @@ if os.environ.get('PAYMENT_LINK_TIMEOUT'):
 # `TOOLSET` 은 선언된 도구 묶음이고, `AUTHENTICATE` 는 원문 열쇠 하나로 자리를
 # 얻는 함수다. 인증 방식은 패키지가 정하지 않는다 — 토큰을 어떻게 세는지는
 # 이 세계의 법(`accounts/models.py`)이다.
+# `VIA` 는 **경로 접두사 → 문 이름** 표다(첫 일치가 이긴다, 없으면 `web`).
+# 어느 URL 이 어느 문인지는 이 세계의 사정이라 패키지가 아니라 여기서 정한다.
 ITDA = {
     'TOOLSET': 'agent.live.tools.toolset',
     'AUTHENTICATE': 'accounts.models.APIToken.authenticate',
+    'VIA': {
+        '/api/': 'api',
+        '/admin/': 'admin',
+        '/agent/': 'console',
+        '/orders/': 'console',
+        '/pay/': 'customer',
+    },
 }
 
 # AI 직원은 is_staff 가 아니라 admin 로그인 화면을 쓸 수 없다 — 콘솔 로그인으로 보낸다.

@@ -61,6 +61,9 @@ GROUPS = {
         # (`django_itda/admin.py`) 줄 권한이 view 하나뿐이다. AI 직원 그룹에는 주지
         # 않는다 — 자기 궤적을 보는 것은 8단계 소재다.
         'django_itda.view_toolcall',
+        # 장부도 점주가 **읽는다.** 쓰기 권한은 없다 — 있어도 admin 이 닫아 두었고,
+        # 애초에 모델 층이 거부한다(`LEDGER-001@v1`). AI 직원에게는 주지 않는다.
+        'ledger.view_event',
     ],
 }
 

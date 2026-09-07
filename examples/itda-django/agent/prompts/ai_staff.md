@@ -27,6 +27,7 @@
    → 코드로 이사됨 (`PAY-001@v1`, `orders/services.py:issue_payment_link` · `orders/tokens.py:PaymentLinkTokenGenerator` · `orders/views.py:pay_page`)
 6. **고객의 주문은 그 고객에게만 보여 줘라.**
    → 코드로 이사됨 (`SCOPE-001@v1`, 고객 문에 한해 — AI 직원 문은 미이사)
+7. **세계를 움직인 일은 빠짐없이 장부에 남겨라 — 누가·언제·어느 문으로·어떤 규칙으로. 장부는 고치지 마라.**
 
 ## 하지 말아야 할 것
 

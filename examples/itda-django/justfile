@@ -24,6 +24,10 @@ test NN='':
         uv run pytest tests/stage_{{ NN }}_*.py
     fi
 
+# 장부를 본다 — 세계가 움직인 사실이 어떻게 남았나 (7단계)
+ledger *ARGS:
+    uv run python manage.py ledger {{ ARGS }}
+
 # 단계 시작 상태로 이동
 stage NN:
     git checkout stage-{{ NN }}-start
