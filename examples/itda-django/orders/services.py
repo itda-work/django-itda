@@ -91,6 +91,9 @@ def issue_payment_link(actor, order):
 
     **세계에 아무것도 쓰지 않는다.** 누가 언제 링크를 발급했는지, 어떤 링크로
     결제됐는지 아무 데도 안 남는다. 무상태 링크의 대가이고, 7단계 장부의 소재다.
+
+    `actor` 는 **지금 쓰지 않는 인자**다. 7단계 장부("누가 링크를 발급했나")가
+    앉을 자리를 미리 뚫어 둔 것이라 시그니처에만 있다.
     """
     if order.status != Order.Status.PENDING:
         return (

@@ -194,7 +194,7 @@ git diff --numstat $TAGS -- '*.py' '*.html' \
   | grep -v -e '^.*\ttests/' -e 'migrations/' -e 'management/commands/' | sum
 
 git diff --numstat $TAGS -- '*/migrations/*' | sum      # 마이그레이션 — 0 이다
-git diff --numstat $TAGS -- 'tests/*' | sum             # 채점표
+git diff --numstat $TAGS -- '*/tests/*' | sum           # 채점표 (구조 뒤집기 뒤라 앞에 `*/`)
 git diff --numstat $TAGS -- '*.md' | sum                # 문서 (이 색인 포함)
 git diff --numstat $TAGS | sum                          # 전체
 

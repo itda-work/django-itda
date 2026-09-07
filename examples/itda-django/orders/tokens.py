@@ -8,7 +8,8 @@
   토큰이 같은 키 공간에 섞인다. 한쪽에서 만든 토큰이 다른 쪽에서 통할 이유가 없다.
 - `_make_hash_value` — 해시에 무엇을 섞는가. 여기가 이 파일의 전부다(아래).
 - `check_token` — 부모가 `settings.PASSWORD_RESET_TIMEOUT` 을 **박아 두어**
-  이 메서드만 다시 쓴다. 원문 그대로이고 다른 것은 마지막 비교의 이름 하나다.
+  이 메서드만 다시 쓴다. 원문을 그대로 옮기고, 마지막 비교만 원문의 동치 변형이다
+  (원문 `> TIMEOUT → False`, 여기 `<= self.timeout`).
 
 `make_token`·`_make_token_with_timestamp`·`_num_seconds`·`_now` 는 상속한다.
 `_now` 는 원문 주석 그대로 "Used for mocking in tests" — 시험에서 시계를 돌릴 때
@@ -58,11 +59,16 @@ class PaymentLinkTokenGenerator(PasswordResetTokenGenerator):
         return f'{order.pk}{order.status}{order.total_amount}{order.user_id}{timestamp}'
 
     def check_token(self, order, token):
-        """부모 원문 그대로. 다른 것은 마지막 비교가 보는 설정 이름 하나다.
+        """부모 원문을 그대로 옮기고, 마지막 비교만 이 클래스의 `timeout` 을 본다.
 
         부모는 `settings.PASSWORD_RESET_TIMEOUT` 을 직접 읽는다 — 훅이 없어서
         메서드를 통째로 다시 쓴다. 상속이 늘 한 줄로 끝나지는 않는다는 것도
         오늘 보는 것 하나다.
+
+        마지막 줄은 원문의 동치 변형이다 — Django 원문은
+        `(now - ts) > TIMEOUT` 이면 `False` 를 돌려주고, 여기서는 같은 조건을
+        뒤집은 `<= self.timeout` 을 그대로 돌려준다. 경계는 같다
+        (정확히 3600초는 **유효**하다).
         """
         if not (order and token):
             return False
