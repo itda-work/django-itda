@@ -25,5 +25,5 @@ urlpatterns = [
     # 결제 페이지는 `/orders/` 아래가 아니라 `/pay/` 다 — 짧아서가 아니라,
     # `/orders/` 는 콘솔 버튼이 두드리는 확정 엔드포인트(AI 가 읽는 자리)이고
     # 여기는 **사람이 여는 페이지**라 403 화면부터 다르기 때문이다(`config/views.py`).
-    path('pay/<int:pk>/', orders_views.pay_page, name='pay'),
+    path('pay/<int:pk>/<str:token>/', orders_views.pay_page, name='pay'),
 ]

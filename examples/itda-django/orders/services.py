@@ -7,12 +7,16 @@
 "세계의 법"이 아니라 "그 화면의 법"이 된다.
 """
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.db import transaction
 from django.urls import reverse
+from django.utils import timezone
 
 from .models import InvalidTransition, Order, OrderItem, Refund
-from .rules import ORDER_001, RULE_TEXTS
+from .rules import ORDER_001, PAY_001, RULE_TEXTS
+from .tokens import payment_token
 from .verdict import Verdict
 
 
@@ -104,9 +108,11 @@ def issue_payment_link(actor, order):
     return (
         Verdict(
             kind=Verdict.ESCALATE,
-            # 아직 법이 없다. 링크는 나가지만 만료도, 주인 검사도 없다 — 6단계에서 켠다.
-            rule_ids=[],
-            reason='결제는 고객이 한다. 결제 링크를 발급했다 — 고객이 직접 결제해야 한다.',
+            rule_ids=[PAY_001],
+            reason=(
+                f'{PAY_001}: 결제는 고객이 한다. 결제 링크를 발급했다 — '
+                f'1시간 안에 고객이 결제해야 한다. {RULE_TEXTS[PAY_001]}'
+            ),
             alternatives=['고객에게 링크를 안내하고 결제 완료를 주문 조회로 확인한다'],
         ),
         _payment_payload(order),
@@ -114,6 +120,13 @@ def issue_payment_link(actor, order):
 
 
 def _payment_payload(order):
-    """링크와 만료 시각. 만료는 아직 없다 — `expires_at` 이 `None` 이다."""
-    url = settings.WORLD_PUBLIC_URL + reverse('pay', args=[order.pk])
-    return {'url': url, 'expires_at': None}
+    """링크와 만료 시각.
+
+    `expires_at` 은 **정보용**이다 — 화면에 띄우고 모델에게 알려 줄 숫자이지,
+    이 값으로 판정하지 않는다. 정본은 토큰이고, 토큰이 스스로 시각을 들고 다닌다.
+    """
+    url = settings.WORLD_PUBLIC_URL + reverse(
+        'pay', args=[order.pk, payment_token.make_token(order)]
+    )
+    expires_at = timezone.now() + timedelta(seconds=payment_token.timeout)
+    return {'url': url, 'expires_at': expires_at.isoformat()}
