@@ -15,6 +15,15 @@
 
 첫째가 이 단계의 소재다. 결제는 버티는데 환불은 못 버틴다. 왜 다른가.
 
+## 사후 변경
+
+**6단계에서 결제 주체가 고객으로 바뀌어 테스트 하나를 옮겼다(2026-09-07).**
+`test_동시_결제_두_개_중_하나만_통과한다_HTTP` 는 AI 직원 토큰으로 `POST
+/api/orders/<pk>/pay/` 를 쏘고 있었는데, 그 문은 이제 **결제 링크만** 준다(202).
+같은 것을 보려면 결제를 실제로 하는 문이어야 하므로 **주문자(bob)의 결제 페이지
+POST** 로 옮겼다. 재는 것은 그대로다 — 두 요청이 같은 순간 출발했을 때 4단계의
+rowcount 계약이 UPDATE 경합을 버티는가. 태그 `stage-05-*` 는 옮기지 않는다.
+
 ## 스레드가 여기서는 되는 이유 — 네 가지 준비
 
 4단계 테스트에는 "SQLite 테스트 DB 는 shared-cache 인메모리라 두 스레드가 같은
@@ -39,6 +48,7 @@ import threading
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
+from urllib.parse import urlparse
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -65,6 +75,11 @@ try:
 except ImportError:  # 5단계 시작 상태
     REFUND_003 = 'REFUND-003@v1'
 REFUND_003_TEXT = '같은 환불을 두 번 처리하지 마라. 한 주문에 환불은 한 번이다.'
+
+try:
+    from orders.rules import PAY_001
+except ImportError:  # 6단계 시작 상태 — 결제 링크의 법이 아직 없다
+    PAY_001 = 'PAY-001@v1'
 REPLAYED = getattr(Outcome, 'REPLAYED', 'REPLAYED')
 
 # `stage-04-done` 시점 대장 세 행의 ID·원문·출처. 고정값이다 — 여기를 고쳐야
@@ -270,21 +285,30 @@ def test_동시_결제_두_개_중_하나만_통과한다_HTTP(world, ai):
     `WHERE status = 'pending'` 을 걸 **행이 이미 있기** 때문이다.
 
     그럼 환불은 왜 못 버티는가. INSERT 에는 조건을 걸 행이 없다.
+
+    6단계 이후 문이 바뀌었다(파일 머리 "사후 변경"). 두 요청은 주문자 **bob** 의
+    브라우저 탭 둘이고, 둘 다 AI 직원이 발급한 **같은 링크**를 연다. 패자의 규칙
+    ID 는 `ORDER-001@v1` 또는 `PAY-001@v1` 이다 — 토큰 검사와 전이 계약 중 어느
+    겹에서 걸렸는지는 타이밍이 정하고, 둘 다 정직한 답이다.
     """
-    _, token = APIToken.issue(ai, 'race')
     order = Order.objects.get(order_number='SEED-0004')
+    assert order.user.username == 'bob', '결제하는 사람은 AI 직원이 아니라 주문자다.'
     product = Product.objects.get(name='한정판 흑임자 다쿠아즈')
     assert product.stock == 1, '한정 재고 1개짜리 주문이어야 경합이 보인다.'
+    _, payment = services.issue_payment_link(ai, order)
+    path = urlparse(payment['url']).path
 
     def worker(_index):
-        response = Client().post(f'{ORDERS_URL}{order.pk}/pay/', **auth(token))
-        return response.status_code, response.json().get('rule_ids', [])
+        client = Client()
+        assert client.login(username='bob', password='pass1234')
+        response = client.post(path)
+        return response.status_code, response.content.decode()
 
     results = _race(worker, Order, 'mark_paid')
 
-    assert sorted(code for code, _ in results) == [200, 409], f'{results}'
-    loser = [rules for code, rules in results if code == 409][0]
-    assert ORDER_001 in loser, f'패자는 규칙 ID 를 들고 돌아와야 한다: {loser}'
+    assert sorted(code for code, _ in results) == [200, 409], f'{[c for c, _ in results]}'
+    loser = [body for code, body in results if code == 409][0]
+    assert ORDER_001 in loser or PAY_001 in loser, '패자는 규칙 ID 를 들고 돌아와야 한다.'
     assert Product.objects.get(pk=product.pk).stock == 0, '재고는 한 번만 깎인다.'
 
 
@@ -564,8 +588,10 @@ def test_잠금_실패는_거부가_아니다_503(world, ai):
     order = Order.objects.get(order_number='SEED-0004')
     client = Client(raise_request_exception=False)
 
+    # 6단계에서 이 문이 부르는 함수가 바뀌었다 — 결제가 아니라 **링크 발급**이다.
+    # 재는 것은 그대로다: 잠금 실패를 무엇으로 번역하는가.
     with mock.patch(
-        'orders.services.pay_order', side_effect=OperationalError('database is locked')
+        'orders.services.issue_payment_link', side_effect=OperationalError('database is locked')
     ):
         response = client.post(f'{ORDERS_URL}{order.pk}/pay/', **auth(token))
 
@@ -593,7 +619,8 @@ def test_스키마_오류는_잠금이_아니다_500(world, ai):
     client = Client(raise_request_exception=False)
 
     with mock.patch(
-        'orders.services.pay_order', side_effect=OperationalError('no such table: busy_orders')
+        'orders.services.issue_payment_link',
+        side_effect=OperationalError('no such table: busy_orders'),
     ):
         response = client.post(f'{ORDERS_URL}{order.pk}/pay/', **auth(token))
 

@@ -18,7 +18,14 @@ from orders.models import Order, Refund
 from orders.verdict import Outcome, Verdict
 from shop.models import Product
 
-from .scenarios import ALICE_CART, ALICE_SHIPPING, BITS, REFUND_TARGETS, REPAY_TARGET
+from .scenarios import (
+    ALICE_CART,
+    ALICE_SHIPPING,
+    BITS,
+    PAY_LINK_CUSTOMER,
+    REFUND_TARGETS,
+    REPAY_TARGET,
+)
 
 User = get_user_model()
 
@@ -103,6 +110,25 @@ def act(request, bit):
         _require(request, 'orders.change_order')
         verdict = _repay(request.user)
         return _respond(request, verdict)
+    elif bit == 'pay-link':
+        _require(request, 'orders.change_order')
+        verdict, payment = _pay_link(request.user)
+        if verdict is None:
+            messages.warning(
+                request,
+                f'{PAY_LINK_CUSTOMER} 의 결제 대기 주문이 없다 — ① 주문 접수를 먼저 실행한다.',
+            )
+            return redirect('agent:console')
+        if payment is not None:
+            # 링크는 화면에 **그대로** 띄운다. 짧게 줄이거나 버튼 뒤에 숨기지 않는다 —
+            # 다른 브라우저(시크릿 창)에 복사해 넣어 보는 것이 이 단계의 실습이고,
+            # "URL 은 복사되고 전달되고 남는다" 가 오늘의 소재이기 때문이다.
+            messages.info(
+                request,
+                f'점주가 아니라 고객이 확정한다 🔗 — {verdict.reason} '
+                f'링크 {payment["url"]} · 만료 {payment["expires_at"] or "없음"}',
+            )
+        return _respond(request, verdict)
     else:
         raise PermissionDenied('알 수 없는 시나리오입니다.')
 
@@ -133,13 +159,30 @@ def _propose_refund(actor, bit):
 
 
 def _repay(actor):
-    """이미 결제 완료된 주문에 결제 처리를 한 번 더 돌린다.
+    """이미 결제 완료된 주문에 결제 링크를 한 번 더 발급하려 한다.
 
-    권한 검사는 통과했다 — 결제 처리는 AI 직원의 업무다.
-    그런데 '지금 상태에서 갈 수 있는 곳인가'는 권한이 답하지 않는다. 전이 계약이 답한다.
+    권한 검사는 통과했다 — 링크 발급은 AI 직원의 업무다.
+    그런데 '지금 상태에서 발급할 수 있는가'는 권한이 답하지 않는다.
+    `mark_paid` 를 막던 것과 **같은 규칙 ID** 가 한 자리 앞에서 답한다.
     """
     order = get_object_or_404(Order, order_number=REPAY_TARGET)
-    return services.pay_order(order)
+    verdict, _payment = services.issue_payment_link(actor, order)
+    return verdict
+
+
+def _pay_link(actor):
+    """① 이 접수한 고객의 최신 결제 대기 주문에 결제 링크를 발급한다.
+
+    대상이 없으면 `(None, None)` — 판정이 아니다. 발급할 주문이 없는 것은
+    세계가 거부한 것이 아니라 아직 아무 일도 일어나지 않은 것이다.
+    """
+    customer = get_object_or_404(User, username=PAY_LINK_CUSTOMER)
+    order = (
+        Order.objects.filter(user=customer, status=Order.Status.PENDING).order_by('-pk').first()
+    )
+    if order is None:
+        return None, None
+    return services.issue_payment_link(actor, order)
 
 
 def _respond(request, verdict):

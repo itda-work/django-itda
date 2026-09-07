@@ -8,6 +8,7 @@
 
     200  ALLOW     규칙이 확정했다
     202  ESCALATE  사람에게 올렸다 — 주문은 아직 안 움직였다
+              (점주의 승인 큐 · 그리고 6단계부터는 **고객의 결제 링크**)
     409  DENY      자격은 있지만 세계가 지금 그 상태가 아니다
     403  권한 없음  애초에 그럴 자격이 없다
     401  토큰 없음/틀림
@@ -195,14 +196,27 @@ def _resolve_lines(items):
 @require_POST
 @token_required
 def order_pay(request, pk):
-    """결제 처리 — 콘솔 카드 ⑥ 과 같은 일. 이미 paid 면 409 ORDER-001@v1."""
+    """결제 **링크 발급** — 콘솔 카드 ⑦ 과 같은 일(6단계).
+
+    5단계까지 이 문은 결제를 완료시켰다. 이제 링크만 준다 — 결제는 고객이
+    자기 손으로 확정한다. 그래서 성공 응답이 200 이 아니라 **202** 다.
+    사람에게 올라갔다는 뜻이고, 주문은 아직 `pending` 이다.
+
+    결제 대기가 아니면 409 `ORDER-001@v1` — 링크도 안 나간다.
+    """
     denied = _require(request, 'orders.change_order', '결제 처리 권한이 없습니다.')
     if denied:
         return denied
     order = get_object_or_404(Order, pk=pk)
-    verdict = services.pay_order(order)
+    verdict, payment = services.issue_payment_link(request.user, order)
     order.refresh_from_db()
-    return verdict_response(verdict, order=order_json(order))
+    extra = {
+        'outcome': Outcome.QUEUED if payment is not None else Outcome.NOTHING,
+        'order': order_json(order),
+    }
+    if payment is not None:
+        extra['payment'] = payment
+    return verdict_response(verdict, **extra)
 
 
 # --- 환불 --------------------------------------------------------------------

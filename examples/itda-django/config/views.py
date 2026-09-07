@@ -10,6 +10,10 @@ from django.shortcuts import render
 
 # 세계의 목소리로 답할 경로. `/agent/` 는 콘솔, `/orders/` 는 콘솔 버튼이 두드리는
 # 확정 엔드포인트뿐이다(사람 전용 페이지가 없다).
+#
+# 6단계에서 사람의 문이 둘 생겼지만 목록은 그대로다 — `/pay/`(고객의 결제 페이지)와
+# `/accounts/`(고객 로그인)는 **사람이 보는 페이지**라 일반 403 이 맞다. 결제 페이지를
+# `/orders/` 아래에 두지 않은 이유이기도 하다(`config/urls.py`).
 AGENT_PREFIXES = ('/agent/', '/orders/')
 
 

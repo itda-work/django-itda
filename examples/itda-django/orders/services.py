@@ -1,15 +1,18 @@
 """업무 동작 — 콘솔(HTML)과 API(JSON)가 **같은 문을 지나게** 하는 자리.
 
-여기 있는 함수는 세 개뿐이고, 셋 다 판정 로직을 갖고 있지 않다.
+여기 있는 함수는 넷뿐이고, 넷 다 판정 로직을 갖고 있지 않다.
 판정은 `Order.mark_paid`·`Refund.decide/apply` 가 하고, 이 모듈은 그 결과를
 그대로 넘긴다. 이 층이 필요한 이유는 하나다 — **입구가 둘이면 법이 갈라진다.**
 콘솔 뷰와 MCP 도구가 각자 환불 절차를 구현하면, 한쪽만 고쳐진 순간부터
 "세계의 법"이 아니라 "그 화면의 법"이 된다.
 """
 
+from django.conf import settings
 from django.db import transaction
+from django.urls import reverse
 
 from .models import InvalidTransition, Order, OrderItem, Refund
+from .rules import ORDER_001, RULE_TEXTS
 from .verdict import Verdict
 
 
@@ -69,3 +72,48 @@ def pay_order(order):
         kind=Verdict.ALLOW,
         reason=f'{order.order_number} 을(를) 결제 완료로 옮겼습니다.',
     )
+
+
+def issue_payment_link(actor, order):
+    """결제 링크를 발급한다. `(Verdict, dict | None)`.
+
+    **결제를 완료시키지 않는다.** 결제는 돈을 내는 사람의 확정이라 AI 직원이
+    대신 누를 일이 아니다 — AI 의 문에서는 여기까지고, `Order.mark_paid` 를
+    부르는 곳은 고객의 결제 페이지 하나다. 권한이 막는 것이 아니라 **경로**가
+    갈린다.
+
+    결제 대기 상태가 아니면 링크를 만들지 않는다. `mark_paid` 가 쓰는 것과
+    **같은 규칙 ID** 다 — 같은 문장이 다른 자리에서 답한다.
+
+    **세계에 아무것도 쓰지 않는다.** 누가 언제 링크를 발급했는지, 어떤 링크로
+    결제됐는지 아무 데도 안 남는다. 무상태 링크의 대가이고, 7단계 장부의 소재다.
+    """
+    if order.status != Order.Status.PENDING:
+        return (
+            Verdict(
+                kind=Verdict.DENY,
+                rule_ids=[ORDER_001],
+                reason=(
+                    f'{ORDER_001}: 결제 대기 상태가 아니다 — 링크를 발급하지 않는다. '
+                    f'{RULE_TEXTS[ORDER_001]}'
+                ),
+                alternatives=['주문 내역에서 이 주문의 현재 상태를 조회한다'],
+            ),
+            None,
+        )
+    return (
+        Verdict(
+            kind=Verdict.ESCALATE,
+            # 아직 법이 없다. 링크는 나가지만 만료도, 주인 검사도 없다 — 6단계에서 켠다.
+            rule_ids=[],
+            reason='결제는 고객이 한다. 결제 링크를 발급했다 — 고객이 직접 결제해야 한다.',
+            alternatives=['고객에게 링크를 안내하고 결제 완료를 주문 조회로 확인한다'],
+        ),
+        _payment_payload(order),
+    )
+
+
+def _payment_payload(order):
+    """링크와 만료 시각. 만료는 아직 없다 — `expires_at` 이 `None` 이다."""
+    url = settings.WORLD_PUBLIC_URL + reverse('pay', args=[order.pk])
+    return {'url': url, 'expires_at': None}

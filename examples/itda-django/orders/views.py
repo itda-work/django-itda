@@ -1,15 +1,20 @@
-"""환불 확정 API — 점주의 자리.
+"""사람이 확정하는 자리 둘 — 점주의 승인과 고객의 결제.
 
-승인·거부는 `orders.change_refund` 권한이 있는 계정만 호출할 수 있다.
+**환불 확정(점주)** 은 `orders.change_refund` 권한이 있는 계정만 호출할 수 있다.
 그 검사는 데코레이터 한 줄이 전부다. AI 직원이 호출하면 여기서 403으로 끊긴다.
+
+**결제(고객)** 는 6단계에서 생긴다. 결제는 돈을 내는 사람의 확정이라 AI 직원이
+대신 누를 일이 아니다 — AI 의 문에서는 링크 발급까지고(`services.issue_payment_link`),
+`Order.mark_paid` 를 부르는 곳은 이 아래의 결제 페이지 하나다.
 """
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from .models import InvalidTransition, Refund
+from . import services
+from .models import InvalidTransition, Order, Refund
 
 
 def _next_url(request):
@@ -52,3 +57,34 @@ def reject_refund(request, pk):
         request, f'{refund.order.order_number} 환불을 거부했습니다. 주문 상태는 그대로입니다.'
     )
     return redirect(_next_url(request))
+
+
+# --- 고객의 자리 — 결제 페이지 -------------------------------------------------
+
+
+@login_required(login_url='accounts:login')
+def pay_page(request, pk):
+    """결제 페이지 — 링크를 받은 사람이 자기 손으로 확정하는 자리.
+
+    이 화면은 세 가지를 물어야 한다.
+
+    1. **누구인가** — 로그인이 답한다(`login_required`).
+    2. **누구의 것인가** — 아직 아무도 안 묻는다. 아래 조회에는 `pk` 뿐이다.
+       로그인만 하면 남의 주문이 열리고, 남의 주소·전화·금액이 보이고,
+       결제 버튼까지 눌린다.
+    3. **언제까지인가** — 링크에 시간이 없다. URL 은 복사되고 전달되고 남는다.
+       어제 준 링크가 오늘도 세계를 움직인다.
+
+    2·3 이 6단계에서 켜는 법 둘이다. 지금은 둘 다 없다.
+    """
+    order = get_object_or_404(Order, pk=pk)
+    if request.method == 'POST':
+        verdict = services.pay_order(order)
+        order.refresh_from_db()
+        return render(
+            request,
+            'orders/pay_result.html',
+            {'verdict': verdict, 'order': order},
+            status=verdict.status_code,
+        )
+    return render(request, 'orders/pay.html', {'order': order, 'expires_at': None})

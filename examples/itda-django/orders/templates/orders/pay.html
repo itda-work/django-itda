@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>결제 — {{ order.order_number }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="mx-auto mt-12 max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <p class="text-xs text-slate-400">가상 상점 · 결제</p>
+    <h1 class="mt-1 font-mono text-xl font-bold">{{ order.order_number }}</h1>
+    <p class="mt-1 text-sm text-slate-500">
+      받는 사람 {{ order.recipient_name }} · {{ order.phone }}<br>
+      {{ order.address }}
+    </p>
+
+    <ul class="mt-5 divide-y divide-slate-100 border-y border-slate-100">
+      {% for item in order.items.all %}
+      <li class="flex items-center justify-between py-2 text-sm">
+        <span>{{ item.product_name }} <span class="text-slate-400">x{{ item.quantity }}</span></span>
+        <span class="text-slate-600">{{ item.total_price }}원</span>
+      </li>
+      {% endfor %}
+    </ul>
+
+    <div class="mt-4 flex items-baseline justify-between">
+      <span class="text-sm font-semibold text-slate-500">결제 금액</span>
+      <span class="text-2xl font-bold">{{ order.total_amount }}원</span>
+    </div>
+
+    <p class="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+      {% if expires_at %}
+      이 링크는 <span class="font-semibold text-slate-700">{{ expires_at|date:"Y-m-d H:i:s" }}</span> 까지 유효하다.
+      {% else %}
+      이 링크에는 만료 시각이 없다 — 닫히지 않는다.
+      {% endif %}
+    </p>
+
+    <form method="post" class="mt-5">
+      {% csrf_token %}
+      <button class="w-full rounded-lg bg-slate-900 px-4 py-3 font-semibold text-white hover:bg-slate-700">
+        {{ order.total_amount }}원 결제하기
+      </button>
+    </form>
+
+    <p class="mt-4 text-xs text-slate-400">
+      결제는 AI 직원이 대신 누르지 않는다. 돈을 내는 사람이 직접 확정한다.
+    </p>
+  </div>
+</body>
+</html>

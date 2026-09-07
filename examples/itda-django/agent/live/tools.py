@@ -110,18 +110,34 @@ def place_order(actor, items: list[dict] | None = None):
     return verdict, Outcome.COMMITTED, {'order': order_json(order)}
 
 
-@toolset.tool(perm='orders.change_order', forbidden_reason='결제 처리 권한이 없습니다.')
+@toolset.tool(
+    perm='orders.change_order',
+    forbidden_reason='결제 처리 권한이 없습니다.',
+    handle_tool='get_order',
+    handle_subject='order',
+)
 def pay_order(actor, order_id: int):
-    """결제 처리를 한다.
+    """결제 링크를 발급한다. **결제를 완료시키지 않는다.**
 
-    결제 대기 상태의 주문만 결제 완료로 갈 수 있다. 이미 결제된 주문에 다시
-    부르면 세계가 거부한다(ORDER-001@v1) — 권한 문제가 아니라 상태 문제다.
+    결제는 돈을 내는 사람의 확정이다. 네가 대신 누를 일이 아니다 —
+    `handle.url` 을 고객에게 그대로 안내하고, 결제됐는지는 `get_order` 로 확인하라.
+    링크에는 만료 시각(`handle.expires_at`)이 함께 실린다.
+
+    돌아오는 것은 격상(ESCALATE)이다. 오류가 아니라 **사람에게 넘어간 상태**이고,
+    주문은 아직 결제 대기 그대로다. 결제 대기가 아닌 주문에는 링크를 발급하지
+    않는다(ORDER-001@v1) — 권한 문제가 아니라 상태 문제다.
     """
     order = _order(order_id)
-    verdict = services.pay_order(order)
+    verdict, payment = services.issue_payment_link(actor, order)
     order.refresh_from_db()
-    state = Outcome.COMMITTED if verdict.kind == Verdict.ALLOW else Outcome.NOTHING
-    return verdict, state, {'order': order_json(order)}
+    objects = {'order': order_json(order)}
+    if payment is None:
+        return verdict, Outcome.NOTHING, objects
+    objects['payment'] = payment
+    # 승인 핸들에 **사람이 여는 URL** 을 보탠다. 기다리는 방법이 폴링뿐이 아니다 —
+    # 패키지가 자동으로 얹는 `check_tool`·`id`·`status` 위에 병합된다(django-itda v0.1.1).
+    objects['handle'] = {'url': payment['url'], 'expires_at': payment['expires_at']}
+    return verdict, Outcome.QUEUED, objects
 
 
 # --- 환불 --------------------------------------------------------------------

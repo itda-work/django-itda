@@ -104,6 +104,17 @@ DATABASES = {
 
 AUTH_USER_MODEL = 'accounts.User'
 
+# 결제 링크에 실을 절대 주소 — 사람이 **다른 브라우저에서** 여는 URL 이라
+# 상대 경로로는 안 된다. 공유 세계(`just run-shared`)에서는 내 IP 를 준다.
+WORLD_PUBLIC_URL = os.environ.get('WORLD_PUBLIC_URL', 'http://127.0.0.1:8000')
+
+# 결제 링크 만료(초) — **관찰용 노브다.** 법의 숫자는 `orders/rules.py` 에 있고
+# (버전을 붙이는 자리는 거기다), 여기는 "1시간을 기다리지 않기" 위한 스위치다.
+#     PAYMENT_LINK_TIMEOUT=5 just run
+# 환경변수를 준 때만 설정이 생긴다 — 안 주면 이 이름은 아예 없고, 법의 숫자가 산다.
+if os.environ.get('PAYMENT_LINK_TIMEOUT'):
+    PAYMENT_LINK_TIMEOUT = int(os.environ['PAYMENT_LINK_TIMEOUT'])
+
 # 도구면 — `manage.py mcp_stdio` 가 읽는다.
 #
 # `TOOLSET` 은 선언된 도구 묶음이고, `AUTHENTICATE` 는 원문 열쇠 하나로 자리를

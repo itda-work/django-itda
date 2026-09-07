@@ -10,6 +10,7 @@ MCP 서버는 이 API 를 감싼 얇은 껍데기이므로, 여기까지가 Djan
 2. 자리를 얻어도 권한이 없으면 403 (`approve`).
 3. 자격이 있어도 세계의 상태가 아니면 409 (`REFUND-001@v1`·`ORDER-001@v1`).
 4. 5만원 초과는 202 — 승인 핸들만 받고 주문은 안 움직인다.
+5. 결제 요청도 202 — 6단계부터 이 문은 **결제 링크만** 준다. 확정은 고객이 한다.
 """
 
 import json
@@ -211,14 +212,27 @@ def test_이미_결제된_주문의_재결제는_409_ORDER_001(client, ai_token)
 
 
 @pytest.mark.django_db
-def test_결제_대기_주문은_결제되고_이_경로도_같은_계약을_지난다(client, ai_token):
+def test_결제_대기_주문에는_링크만_발급된다_202(client, ai_token):
+    """6단계 — AI 의 문에서는 **링크 발급까지**다.
+
+    5단계까지 이 호출은 200 으로 결제를 끝냈다. 이제 202 다. 격상은 실패가
+    아니라 사람에게 넘어간 상태이고, 넘어간 사람은 점주가 아니라 **고객**이다.
+    두 번 불러도 두 번 다 202 다 — 아무것도 확정하지 않았으니 다툴 상태가 없다.
+    """
     order = Order.objects.get(order_number='SEED-0004')
 
     first = client.post(f'{ORDERS_URL}{order.pk}/pay/', **auth(ai_token))
     second = client.post(f'{ORDERS_URL}{order.pk}/pay/', **auth(ai_token))
+    body = first.json()
 
-    assert first.status_code == 200
-    assert second.status_code == 409  # 두 번째는 pending 인 행이 없다
+    assert (first.status_code, second.status_code) == (202, 202)
+    assert body['kind'] == Verdict.ESCALATE
+    assert body['outcome'] == Outcome.QUEUED
+    assert body['payment']['url'].endswith('/'), '사람이 브라우저에 붙여 넣을 절대 URL 이다.'
+    assert body['order']['status'] == Order.Status.PENDING, '링크만으로는 세계가 안 움직인다.'
+
+    order.refresh_from_db()
+    assert order.status == Order.Status.PENDING
 
 
 @pytest.mark.django_db

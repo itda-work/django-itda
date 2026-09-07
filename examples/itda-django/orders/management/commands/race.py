@@ -13,7 +13,10 @@
   스레드 둘을 서비스 함수 직전에 만나게 했다가 동시에 풀어 준다. 매번 겹친다.
   **이 모드는 `db.sqlite3` 를 직접 만진다.** 세계가 더러워지면 `just reset-db` 로
   되돌린다(다른 파일에서 보고 싶으면 `ITDA_DB=/tmp/race.sqlite3` 를 준다).
-- **`--http`** — 확률적이다. 진짜 HTTP 요청 두 개를 Barrier 로 맞춰 쏜다. 창이
+- **`--http`** — 확률적이다. 진짜 HTTP 요청 두 개를 Barrier 로 맞춰 쏜다. **`refund`·`approve`
+  만 받는다** — 6단계부터 결제의 확정자는 고객이고, 고객의 결제 페이지는 세션으로 여는
+  사람의 자리라 `ai-staff` 토큰으로 쏠 수 없다(토큰 API 는 이제 링크만 준다). 결제 경합은
+  in-process 모드로 본다. 창이
   좁아 매번 겹치지는 않으므로 `--rounds` 로 반복하고, **회차마다 대상을 새로
   만든다**(`target` 은 장바구니 원본으로 쓴다). 같은 주문에 계속 쏘면 2회차부터는
   경합과 무관하게 `ALREADY` 가 나와 회차를 세는 의미가 없다. 옆자리 학생의
@@ -56,6 +59,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         if options['http']:
+            if options['mode'] == 'pay':
+                raise CommandError(
+                    '6단계부터 결제는 고객 세션 — refund/approve 만 --http. '
+                    '결제 경합은 --http 없이 in-process 로 본다(just race pay SEED-0004).'
+                )
             self._race_http(options)
         else:
             self._race_in_process(options)
@@ -228,13 +236,15 @@ class Command(BaseCommand):
     # --- 회차 준비 -----------------------------------------------------------
 
     def _prepare(self, base, token, items, options):
-        """이번 회차의 대상을 새로 만들고 `(method, path, payload, 설명)` 을 돌려준다."""
-        order = self._post(base, token, '/api/orders/', {'items': items})['order']
-        subject = f'새 주문 {order["order_number"]}'
-        if options['mode'] == 'pay':
-            return 'POST', f'/api/orders/{order["id"]}/pay/', None, subject
+        """이번 회차의 대상을 새로 만들고 `(method, path, payload, 설명)` 을 돌려준다.
 
-        self._post(base, token, f'/api/orders/{order["id"]}/pay/', None)
+        주문을 **결제까지 하지는 않는다.** 6단계부터 토큰 API 는 결제 링크만 주고
+        결제는 고객 세션의 몫이다. 새 주문은 `pending` 인 채로 남는데, 환불 판정은
+        주문 상태를 묻지 않으므로(`Refund.decide` — 기한과 금액만 본다) 이 트랙이
+        보려는 INSERT·UPDATE 경합은 그대로 재현된다.
+        """
+        order = self._post(base, token, '/api/orders/', {'items': items})['order']
+        subject = f'새 주문 {order["order_number"]} (결제 대기)'
         payload = {'order_id': order['id'], 'reason': '경합 관찰'}
         if options['amount']:
             payload['amount'] = options['amount']

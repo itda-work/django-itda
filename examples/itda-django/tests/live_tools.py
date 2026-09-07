@@ -219,14 +219,24 @@ def test_장바구니를_못_읽으면_판정이_아니라_오류다(ai):
 
 
 @pytest.mark.django_db
-def test_결제_대기_주문은_결제된다(ai):
+def test_결제_대기_주문에는_결제_링크가_발급된다(ai):
+    """6단계 — 도구가 결제를 끝내지 않는다. 사람이 여는 URL 을 승인 핸들에 싣는다.
+
+    핸들은 두 겹이다. 패키지가 얹는 `check_tool`·`id`·`status`(폴링) 위에
+    도구가 `url`·`expires_at` 을 보탠다(django-itda v0.1.1 `objects['handle']`).
+    기다리는 방법이 폴링뿐이 아니라는 것이 이 단계가 패키지에 준 입력이다.
+    """
     order = Order.objects.get(order_number='SEED-0004')
 
     result = call('pay_order', ai, order_id=order.pk)
 
-    assert result['kind'] == Verdict.ALLOW
-    assert result['outcome'] == Outcome.COMMITTED
-    assert result['order']['status'] == Order.Status.PAID
+    assert result['kind'] == Verdict.ESCALATE
+    assert result['outcome'] == Outcome.QUEUED
+    assert result['order']['status'] == Order.Status.PENDING, '링크만으로는 안 움직인다.'
+    assert result['handle']['check_tool'] == 'get_order'
+    assert result['handle']['id'] == order.pk
+    assert result['handle']['url'] == result['payment']['url']
+    assert 'expires_at' in result['handle']
 
 
 # --- 6. 궤적 — 세 문이 같은 표에 남는다 ------------------------------------------
