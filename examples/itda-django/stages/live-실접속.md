@@ -29,13 +29,35 @@ Django 안에 MCP 를 호스팅하지 않는다. 왜 그게 별개의 문제인�
 
 ## (a) 붙이는 법
 
-### 1. 세계를 띄운다 — 별도 터미널
+### 한 줄 준비
+
+```bash
+just live-setup
+```
+
+이 한 줄이 네 가지를 한다 — ① `reset-db` 로 세계를 처음부터 다시 심고, ②
+`issue_token` 으로 `ai-staff` 의 열쇠를 새로 발급하고, ③ 저장소 루트에서
+`itda-world`(HTTP 경로)와 `itda-world-pkg`(패키지 경로) 두 MCP 서버를 그 열쇠로
+재등록하고, ④ `claude mcp list` 로 두 줄이 걸렸는지 보여 준다. 등록은 반드시
+**저장소 루트**에서 일어난다 — Claude Code 의 local 스코프는 명령을 실행한 cwd 의
+프로젝트에 묶이고, 새 세션을 여는 곳이 거기이기 때문이다.
+
+세계는 그대로 두고 열쇠만 다시 걸고 싶으면 `just live-register` 다.
+
+**키를 손으로 옮기지 않는다.** `just token` 은 부를 때마다 새 키를 쌓고 `reset-db`
+는 `APIToken` 을 전부 지운다. 그래서 사람이 값을 들고 다니는 순간 어긋난다 — 지운
+세계의 옛 키가 등록에 남아 있거나, 복사하다 `$(WORLD_TOKEN)` 같은 빈 값이 걸린다.
+원문 키는 발급 프로세스와 등록 명령 사이에서만 흐르게 두고, 화면에도 찍지 않는다.
+
+### 손으로 하려면
+
+#### 1. 세계를 띄운다 — 별도 터미널
 
 ```bash
 just run          # http://127.0.0.1:8000 에서 계속 돌고 있어야 한다
 ```
 
-### 2. 열쇠를 발급한다
+#### 2. 열쇠를 발급한다
 
 ```bash
 just token                    # = manage.py issue_token ai-staff --name claude-code
@@ -49,7 +71,7 @@ just token                    # = manage.py issue_token ai-staff --name claude-c
 토큰이 주는 것은 **자리(ai-staff)까지**다. 그 자리에서 무엇을 할 수 있는지는
 여전히 권한이 답한다. 인증과 인가는 다른 질문이다.
 
-### 3. Claude Code 에 등록한다
+#### 3. Claude Code 에 등록한다
 
 ```bash
 claude mcp add itda-world \
@@ -60,7 +82,7 @@ claude mcp add itda-world \
 `--directory` 에는 교육 프로젝트 디렉터리(`examples/itda-django/`)의 절대 경로를 넣는다. `--env WORLD_URL=…` 로 주소를
 바꿀 수 있고, 기본값은 `http://127.0.0.1:8000` 이다.
 
-### 3'. Claude Desktop 에 등록한다면
+#### 3'. Claude Desktop 에 등록한다면
 
 `claude_desktop_config.json` 에 넣는다(macOS:
 `~/Library/Application Support/Claude/claude_desktop_config.json`).
@@ -85,7 +107,7 @@ claude mcp add itda-world \
 
 `uv` 의 절대 경로가 필요할 수 있다(`which uv`). 등록 후 Claude Desktop 재시작.
 
-### 4. 도구가 붙었는지 본다
+#### 4. 도구가 붙었는지 본다
 
 도구 7개가 보이면 된다.
 
@@ -109,6 +131,8 @@ claude mcp add itda-world \
 두 번째 문이 **패키지 경로**이고, 이쪽은 Django 프로세스 **안**에서 도구면이 선다
 (`django-itda` 의 `manage.py mcp_stdio`). 세계를 따로 띄울 필요가 없다 — 이 명령이
 곧 세계다.
+
+`just live-setup` 이 이 등록을 함께 한다.
 
 ```bash
 claude mcp add itda-world-pkg \

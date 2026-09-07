@@ -53,3 +53,15 @@ reset-db:
     rm -f db.sqlite3
     uv run python manage.py migrate
     uv run python manage.py seed_world
+
+# 실접속 트랙 — 세계를 새로 심고 열쇠까지 새로 건다 (reset-db → 토큰 발급 → MCP 재등록 → 확인)
+live-setup: reset-db
+    #!/usr/bin/env bash
+    set -euo pipefail
+    "{{ justfile_directory() }}/scripts/live_register.sh"
+
+# 실접속 트랙 — 세계는 두고 열쇠만 새로 건다 (토큰 발급 → MCP 재등록 → 확인)
+live-register:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    "{{ justfile_directory() }}/scripts/live_register.sh"
