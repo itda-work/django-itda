@@ -263,6 +263,18 @@ def test_admin_경로도_같은_표에_남길_수_있다(ai, owner):
     assert only_row('approve_refund').via == ToolCall.Via.ADMIN
 
 
+@pytest.mark.django_db
+def test_점주는_admin_에서_궤적을_읽을_수_있다(client, ai, owner):
+    """403 은 코드가 아니라 데이터다 — 점주 그룹에 `view_toolcall` 이 시드돼 있다."""
+    order = Order.objects.get(order_number='SEED-0002')
+    call('propose_refund', ai, order_id=order.pk)
+
+    client.force_login(owner)
+    response = client.get('/admin/django_itda/toolcall/')
+
+    assert response.status_code == 200
+
+
 # --- 7. 도구 목록 ---------------------------------------------------------------
 
 

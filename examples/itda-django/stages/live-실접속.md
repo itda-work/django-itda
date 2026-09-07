@@ -156,7 +156,9 @@ claude mcp add itda-world-pkg \
 차이가 말이 아니라 응답으로 보인다. 임시 서버를 대체하는 것은 8단계다.
 
 세 번째 차이를 눈으로 보려면 시나리오 ①~④ 를 `itda-world-pkg` 로 한 번 더 돌린 뒤
-`/admin/django_itda/toolcall/` 을 열어라. 2차 관찰의 발견 3 — 점주가 admin 에서
+`/admin/django_itda/toolcall/` 을 열어라. `owner` 로 — 점주 그룹에 `view_toolcall` 이
+시드돼 있다. 403 이면 세계를 `just live-setup` 으로 다시 심은 뒤인지 확인하라.
+2차 관찰의 발견 3 — 점주가 admin 에서
 승인했는데 `LogEntry` 가 0건이었던 그 빈자리 — 이 표가 채우기 시작하는 자리다.
 (`via` 열이 `mcp`·`api`·`admin`·`shell` 을 구분한다. admin 경로를 이 표에 남기는 것은
 7단계의 몫이다.)

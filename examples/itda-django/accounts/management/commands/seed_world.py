@@ -57,6 +57,10 @@ GROUPS = {
         'shop.view_category',
         'shop.view_product',
         'accounts.view_user',
+        # 궤적은 점주가 **읽는** 장부다. 추가·변경·삭제는 admin 자체가 닫아 두었으므로
+        # (`django_itda/admin.py`) 줄 권한이 view 하나뿐이다. AI 직원 그룹에는 주지
+        # 않는다 — 자기 궤적을 보는 것은 8단계 소재다.
+        'django_itda.view_toolcall',
     ],
 }
 
