@@ -8,6 +8,7 @@ from django.db import IntegrityError, models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from ledger.models import Event
 from shop.models import Product
 
 from .rules import (
@@ -57,12 +58,27 @@ class Order(models.Model):
     address = models.CharField('주소', max_length=200)
     total_amount = models.PositiveIntegerField('총 결제 금액')
     created_at = models.DateTimeField('주문일', auto_now_add=True)
+    # 결제 시각. 상태 UPDATE 와 **같은 문장**에서 채운다(7단계).
+    # 4단계 `Refund.decide` 가 "결제일은 `created_at` 으로 본다" 고 적어 둔
+    # 교육상 가정이 여기서 데이터가 된다. 규칙이 이 칸을 읽게 하는 것은
+    # 아직 하지 않는다 — 그건 `REFUND-001@v2` 라는 새 대장 행이 필요하다.
+    paid_at = models.DateTimeField('결제일', null=True, blank=True)
     updated_at = models.DateTimeField('수정일', auto_now=True)
 
     class Meta:
         verbose_name = '주문'
         verbose_name_plural = '주문'
         ordering = ['-created_at']
+        constraints = [
+            # 결제 완료 이후 상태(`paid`·`shipping`·`completed`)의 주문은 결제
+            # 시각을 가진다. **법이 아니라 범용 제약**이다 — 점주가 말한 문장이
+            # 아니므로 `RULES.md` 행이 아니다(0단계의 `PositiveIntegerField` 와
+            # 같은 격). 선언은 한 줄이고, 값은 이미 있는 행이 치른다.
+            models.CheckConstraint(
+                condition=Q(status__in=['pending', 'cancelled']) | Q(paid_at__isnull=False),
+                name='order_paid_has_paid_at',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.order_number} ({self.user})'
@@ -73,7 +89,7 @@ class Order(models.Model):
             self.order_number = f'{today}-{uuid.uuid4().hex[:8].upper()}'
         super().save(*args, **kwargs)
 
-    def mark_paid(self):
+    def mark_paid(self, actor):
         """전이 계약: `pending` 에서만 `paid` 로 간다 (ORDER-001@v1).
 
         `WHERE status = 'pending'` 을 붙인 UPDATE 를 먼저 쏘고 rowcount 를 본다.
@@ -88,10 +104,24 @@ class Order(models.Model):
         재고 차감은 `stock >= 수량` 조건부 UPDATE로 수행한다. 결제 직전에 재고가
         줄어든 경쟁 상황에서도 초과 판매가 일어나지 않으며, 재고가 부족하면
         InsufficientStock을 일으키고 상태 전이와 앞 상품 차감까지 통째로 되돌린다.
+
+        `actor` 는 **누가 결제했는가**다(7단계). 이 세계에서 결제를 확정하는
+        사람은 고객이므로 결제 페이지가 `request.user` 를 넘긴다. 자리를 인자로
+        받는 이유는 장부가 그것을 지어낼 수 없기 때문이다 — 전이 메서드가
+        모르는 것을 장부가 알 수는 없다.
+
+        `paid_at` 은 상태 UPDATE 와 **같은 문장**에서 채운다. 두 문장으로
+        나누면 그 사이에 "결제됐는데 결제 시각이 없는" 행이 존재하고,
+        그 순간 `CheckConstraint` 가 지키는 것이 없어진다.
+
+        장부는 **사실 뒤에** 적는다(LEDGER-001@v1). rowcount 를 본 뒤, 재고를
+        깎은 뒤다. 같은 `atomic` 안이라 무엇 하나가 실패하면 기록도 함께
+        되돌아간다 — 세계가 안 움직였는데 장부에만 남는 일은 없다.
         """
         with transaction.atomic():
+            paid_at = timezone.now()
             moved = Order.objects.filter(pk=self.pk, status=self.Status.PENDING).update(
-                status=self.Status.PAID
+                status=self.Status.PAID, paid_at=paid_at
             )
             if not moved:
                 raise InvalidTransition(
@@ -120,9 +150,30 @@ class Order(models.Model):
                         f'{item.product_name}의 재고가 부족합니다. '
                         f'(남은 재고 {item.product.stock}개)'
                     )
+                # `updated` 를 본 **뒤**다. 깎이지 않은 재고를 깎았다고 적으면
+                # 그건 4단계의 rowcount 버그를 장부에 옮겨 놓는 것이다.
+                Event.record(
+                    subject=item.product,
+                    transition=Event.Transition.STOCK_DEDUCTED,
+                    kind=Event.Kind.ALLOW,
+                    reason=f'{item.product_name} {item.quantity}개를 차감했다.',
+                    before={'stock': item.product.stock},
+                    after={'stock': item.product.stock - item.quantity},
+                    actor=actor,
+                )
             # 상태는 위에서 이미 옮겼다. 여기서는 메모리 위의 객체만 맞춰 준다.
             self.status = self.Status.PAID
+            self.paid_at = paid_at
             self.save(update_fields=['updated_at'])
+            Event.record(
+                subject=self,
+                transition=Event.Transition.ORDER_PAID,
+                kind=Event.Kind.ALLOW,
+                reason=f'{self.order_number} 을(를) 결제 완료로 옮겼다.',
+                before={'status': self.Status.PENDING},
+                after={'status': self.Status.PAID, 'paid_at': paid_at.isoformat()},
+                actor=actor,
+            )
 
 
 class OrderItem(models.Model):
@@ -345,6 +396,20 @@ class Refund(models.Model):
                     idempotency_key=idempotency_key,
                     verdict=verdict.as_dict(),
                 )
+                # 사실 뒤, 같은 트랜잭션이다. **판정을 각인한다** —
+                # 어떤 규칙이 이 제안을 허락·격상했는지가 여기 남는다.
+                # 고객이 쓴 사유 원문(`reason` 인자)은 싣지 않는다. 장부에
+                # 남의 말을 그대로 실으면 장부가 오염 벡터가 된다 —
+                # 원문이 필요하면 `Refund.reason` 에 있다.
+                Event.record(
+                    subject=refund,
+                    transition=Event.Transition.REFUND_PROPOSED,
+                    kind=verdict.kind,
+                    rule_ids=verdict.rule_ids,
+                    reason=verdict.reason,
+                    after={'status': cls.Status.PROPOSED, 'amount': amount},
+                    actor=requested_by,
+                )
                 if verdict.kind == Verdict.ALLOW:
                     refund.approve(by=None, via=cls.Via.RULE)
                     return verdict, Outcome(state=Outcome.COMMITTED, refund=refund)
@@ -449,6 +514,10 @@ class Refund(models.Model):
         두 저장은 **하나의 트랜잭션**이다. 주문 저장이 실패했는데 환불만
         approved 로 남으면, 장부는 "환불했다"는데 주문은 살아 있게 된다.
         admin·shell 에서 직접 불러도 같은 보장이 걸리도록 메서드 안에 둔다.
+
+        **장부도 이 안에서 적는다**(7단계). 서비스 층에 두면 admin 액션처럼
+        서비스를 지나지 않는 문이 통째로 빠진다 — 실접속 관찰 2차 발견 3 이
+        그 자리다. 전이가 일어나는 곳이 곧 기록이 일어나는 곳이어야 한다.
         """
         decided_via = via or (self.Via.OWNER if by else self.Via.RULE)
         decided_at = timezone.now()
@@ -468,8 +537,31 @@ class Refund(models.Model):
             self.decided_via = decided_via
             self.decided_at = decided_at
 
+            was = self.order.status
             self.order.status = Order.Status.CANCELLED
             self.order.save(update_fields=['status', 'updated_at'])
+
+            # 한 요청이 만든 **두 사실**이라 두 행이고, 같은 `call_id` 로 묶인다.
+            # 규칙이 확정했으면 `by` 가 `None` 이고 장부의 자리 칸도 빈다 —
+            # 빠진 값이 아니라 사람이 없었다는 사실이다.
+            Event.record(
+                subject=self,
+                transition=Event.Transition.REFUND_APPROVED,
+                kind=Event.Kind.ALLOW,
+                reason=f'{self.order.order_number} 환불 {self.amount:,}원을 승인했다.',
+                before={'status': self.Status.PROPOSED},
+                after={'status': self.Status.APPROVED, 'decided_via': decided_via},
+                actor=by,
+            )
+            Event.record(
+                subject=self.order,
+                transition=Event.Transition.ORDER_CANCELLED,
+                kind=Event.Kind.ALLOW,
+                reason='환불이 승인되어 주문을 취소했다.',
+                before={'status': was},
+                after={'status': Order.Status.CANCELLED},
+                actor=by,
+            )
 
     def reject(self, by, note=''):
         """점주가 거부한다 — 주문은 그대로 두고, 거부했다는 사실을 남긴다.
@@ -496,6 +588,18 @@ class Refund(models.Model):
             self.decided_via = decided_via
             self.decided_at = decided_at
             self.reason = reason
+
+            # 주문은 안 움직였으므로 행은 **하나**다. 거부는 세계를 바꾸지
+            # 않는 것이 아니라, 환불의 상태 하나를 바꾼다.
+            Event.record(
+                subject=self,
+                transition=Event.Transition.REFUND_REJECTED,
+                kind=Event.Kind.ALLOW,
+                reason=f'{self.order.order_number} 환불 {self.amount:,}원을 거부했다.',
+                before={'status': self.Status.PROPOSED},
+                after={'status': self.Status.REJECTED, 'decided_via': decided_via},
+                actor=by,
+            )
 
     def _not_proposed(self):
         """확정이 조건에 걸렸을 때의 판정 하나 — 승인과 거부가 같은 문장을 쓴다."""

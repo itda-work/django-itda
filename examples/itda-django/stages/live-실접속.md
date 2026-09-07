@@ -252,6 +252,34 @@ HTTP 문(`itda-world`)으로 같은 것을 하면 202 를 `_escalated` 가 환�
 조립해 `refund_id: null` 이 나오고 `payment.url` 이 사라진다(발견 1). 두 문을
 나란히 놓고 보는 자리다 — (a') 표.
 
+### ⑤ 한 주문의 일생을 장부에서 읽기 (7단계)
+
+7단계부터 위 시나리오들이 **장부에 남는다.** 도구 결과의 `call_id` 를 그대로
+들고 와서 사슬을 뽑는다 — 도구면 궤적(`ToolCall`)과 도메인 장부(`ledger.Event`)가
+**같은 상관 ID** 를 갖기 때문에 두 층이 한 줄로 이어진다(django-itda v0.2 호출 문맥).
+
+```bash
+just ledger --call <call_id 앞 8자>
+just ledger                       # 최근 20행
+```
+
+문 넷을 지나며 한 표에 남는 것을 본다.
+
+| 요청 | 남는 행 | `door` | `actor` |
+|---|---|---|---|
+| "SEED-0002 환불해 줘" | `refund.proposed` (각인 `REFUND-002@v1`) | `mcp` | `ai-staff` |
+| 점주가 `/admin/` 에서 승인 | `refund.approved` + `order.cancelled`(같은 `call_id`) | `admin` | `owner` |
+| "SEED-0004 결제 링크 줘" | `payment_link.issued` | `mcp` | `ai-staff` |
+| `bob` 이 링크를 열어 결제 | `order.paid` + `stock.deducted` | `customer` | `bob` |
+
+**발견 3 의 답이 여기 있다.** admin 승인은 `LogEntry` 에 여전히 0건이고
+(그건 Django 의 장부다), 우리 장부에는 `door=admin` 두 행이 남는다.
+
+거부된 호출은 **도메인 장부에 없다.** "SEED-0001 환불해 줘"(REFUND-001@v1 DENY)나
+paid 주문의 링크 재발급은 세계를 바꾸지 않았으므로 행이 없고, 불린 사실은
+`ToolCall`(`error=denied`)에만 있다. 두 표를 나란히 놓고 보는 자리다 —
+**"무엇을 시켰나" 와 "세계가 무엇으로 바뀌었나" 는 다른 질문이다.**
+
 ## (c) 이 트랙이 보장하지 않는 것
 
 4단계 말미의 표([`04-규칙의-이사.md`](04-규칙의-이사.md#이-단계가-보장하지-않는-것))가

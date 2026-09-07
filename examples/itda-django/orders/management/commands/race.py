@@ -98,7 +98,10 @@ class Command(BaseCommand):
             owner_of_hook, hook = Order, 'mark_paid'
 
             def work():
-                verdict = services.pay_order(Order.objects.get(pk=order.pk))
+                # 결제를 확정하는 사람은 **주문자**다(6단계). 7단계부터 그 자리를
+                # 전이에 넘겨야 장부의 자리 칸이 빈 채로 남지 않는다.
+                fresh = Order.objects.select_related('user').get(pk=order.pk)
+                verdict = services.pay_order(fresh.user, fresh)
                 return verdict, verdict.reason
         else:
             refund_pk = self._refund_pk(target)

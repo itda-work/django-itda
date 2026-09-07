@@ -81,13 +81,15 @@ def pay_page(request, pk, token):
     **만료는 이중 결제를 막는 장치가 아니다.** 그건 4단계 `ORDER-001@v1` 의
     몫이고 그대로다. POST 는 1·2 를 다시 지난 뒤 `services.pay_order` 를 부르고,
     전이 계약이 마지막에 지킨다 — 토큰이 먼저 닫고 계약이 마지막에 지키는 두 겹이다.
+    부를 때 **누가 결제했는지**(`request.user`)를 같이 넘긴다 — 7단계 장부의
+    자리 칸이고, 이 세계에서 결제를 확정하는 사람은 고객이다.
     (두 탭에서 동시에 누르면 토큰은 둘 다 통과하고 계약이 하나를 거른다.)
     """
     order = get_object_or_404(Order, pk=pk, user=request.user)
     if not payment_token.check_token(order, token):
         return _link_closed(request, order)
     if request.method == 'POST':
-        verdict = services.pay_order(order)
+        verdict = services.pay_order(request.user, order)
         order.refresh_from_db()
         return render(
             request,

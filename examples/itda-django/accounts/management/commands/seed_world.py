@@ -91,6 +91,9 @@ PRODUCTS = [
 #   SEED-0001  22,500원 · 8일 전  — 임계 아래지만 7일이 지났다
 #   SEED-0002  54,000원 · 3일 전  — 임계 위 → 점주에게 올라간다
 #   SEED-0003  68,000원 · 1일 전  — 임계 위 → 점주에게 올라간다
+# 결제가 끝난 뒤에만 갈 수 있는 상태들 — 이 행들은 결제 시각을 가진다(7단계).
+AFTER_PAYMENT = (Order.Status.PAID, Order.Status.SHIPPING, Order.Status.COMPLETED)
+
 ORDERS = [
     (
         'SEED-0001', 'alice', Order.Status.COMPLETED, 8,
@@ -192,6 +195,11 @@ class Command(BaseCommand):
         for number, username, status, days_ago, recipient, phone, address, lines in ORDERS:
             items = [(products[name], quantity) for name, quantity in lines]
             total = sum(product.price * quantity for product, quantity in items)
+            placed_at = now - timedelta(days=days_ago)
+            # 결제 완료 이후 상태의 주문은 **결제 시각을 가져야 한다**
+            # (7단계 `order_paid_has_paid_at`). 값은 마이그레이션의 backfill 과
+            # 같은 규칙 — 결제일은 주문일로 본다(4단계의 교육상 가정).
+            paid_at = placed_at if status in AFTER_PAYMENT else None
 
             order, created = Order.objects.get_or_create(
                 order_number=number,
@@ -202,6 +210,7 @@ class Command(BaseCommand):
                     'phone': phone,
                     'address': address,
                     'total_amount': total,
+                    'paid_at': paid_at,
                 },
             )
             if not created:
@@ -212,10 +221,11 @@ class Command(BaseCommand):
                     phone=phone,
                     address=address,
                     total_amount=total,
+                    paid_at=paid_at,
                 )
 
             # auto_now_add 는 대입으로 바꿀 수 없어 UPDATE 로 주문일을 과거로 밀어 둔다.
-            Order.objects.filter(pk=order.pk).update(created_at=now - timedelta(days=days_ago))
+            Order.objects.filter(pk=order.pk).update(created_at=placed_at, paid_at=paid_at)
 
             order.items.all().delete()
             for product, quantity in items:

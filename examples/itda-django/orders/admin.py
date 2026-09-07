@@ -22,7 +22,10 @@ class OrderAdmin(admin.ModelAdmin):
     list_filter = ('status',)
     search_fields = ('order_number', 'user__username', 'recipient_name')
     inlines = (OrderItemInline,)
-    readonly_fields = ('order_number', 'created_at', 'updated_at')
+    # `paid_at` 도 손으로 못 고친다(7단계) — 결제 시각은 **일어난 일**이지
+    # 점주가 정하는 값이 아니다. 폼에 열어 두면 상태만 바꿔 저장하는 순간
+    # 결제 시각이 지워지고, `order_paid_has_paid_at` 이 그것을 거절한다.
+    readonly_fields = ('order_number', 'paid_at', 'created_at', 'updated_at')
 
 
 @admin.register(Refund)

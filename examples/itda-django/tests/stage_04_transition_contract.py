@@ -7,6 +7,18 @@
 
 판정은 세 값이다 — ALLOW / DENY / ESCALATE. 그리고 DENY·ESCALATE 에는
 **대안(alternatives)** 이 붙는다. 거절만 하고 길을 안 알려주면 AI 직원은 우회를 시도한다.
+
+## 사후 변경(7단계)
+
+두 곳이 바뀌었다. 재는 것은 그대로다 — 전이 계약이 조건 불일치를 거부하는가.
+
+- `Order.mark_paid()` → **`mark_paid(actor)`**. 누가 결제했는지를 전이가 받는다
+  (장부의 자리 칸). 이 파일은 `order.user` 를 넘긴다.
+- `_order()` fixture 가 결제 완료 이후 상태의 주문에 `paid_at` 을 채운다
+  (`order_paid_has_paid_at`). 채점표가 만드는 세계도 세계의 제약 안에 있어야 한다.
+
+**태그 `stage-04-*` 는 이동하지 않는다** — 옛 태그를 checkout 하면 옛 시그니처로
+도는 옛 테스트가 그대로 있다.
 """
 
 from datetime import timedelta
@@ -87,6 +99,10 @@ def _order(
         phone='010-0000-0001',
         address='서울시 가상구 없는동 1-1',
         total_amount=total,
+        # 사후 변경(7단계) — 결제 완료 이후 상태의 주문은 결제 시각을 가진다
+        # (`order_paid_has_paid_at`). 이 파일이 만드는 fixture 도 세계의 제약
+        # 안에 있어야 한다. 값은 backfill 과 같은 규칙(결제일 = 주문일)이다.
+        paid_at=None if status == Order.Status.PENDING else timezone.now(),
     )
     if product_name:
         product = Product.objects.get(name=product_name)
@@ -255,7 +271,7 @@ def test_pending_에서만_paid_로_간다(world, contract):
     before = product.stock
 
     with pytest.raises(InvalidTransition) as caught:
-        order.mark_paid()
+        order.mark_paid(order.user)
 
     assert ORDER_001 in caught.value.verdict.rule_ids
     assert Product.objects.get(pk=product.pk).stock == before, '재고는 건드리지 않았어야 한다.'
@@ -270,7 +286,7 @@ def test_정상_전이는_그대로_통과한다(world):
     product = Product.objects.get(name='만년필 잉크 30ml')
     before = product.stock
 
-    order.mark_paid()
+    order.mark_paid(order.user)
 
     order.refresh_from_db()
     assert order.status == Order.Status.PAID
@@ -298,7 +314,7 @@ def test_두_번_호출해도_재고는_한_번만_깎인다(world, contract):
 
     for _ in range(2):
         try:
-            Order.objects.get(pk=order.pk).mark_paid()
+            Order.objects.get(pk=order.pk).mark_paid(order.user)
             results.append('ok')
         except InvalidTransition:
             results.append('denied')
@@ -331,7 +347,7 @@ def test_뒤_상품에서_재고가_모자라면_앞_상품_차감도_돌아온�
     before_first, before_second = first.stock, second.stock
 
     with pytest.raises(InsufficientStock):
-        order.mark_paid()
+        order.mark_paid(order.user)
 
     assert Product.objects.get(pk=first.pk).stock == before_first, '앞 상품 차감이 복원돼야 한다.'
     assert Product.objects.get(pk=second.pk).stock == before_second

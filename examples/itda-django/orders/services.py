@@ -6,8 +6,10 @@
 콘솔 뷰와 MCP 도구가 각자 환불 절차를 구현하면, 한쪽만 고쳐진 순간부터
 "세계의 법"이 아니라 "그 화면의 법"이 된다.
 
-7단계에서 이 층이 **장부도 적는다.** 입구가 하나니 기록도 한 자리에 모으면
-빠짐없이 남는다 — 는 것이 여기 적힌 이유이고, 그게 이 단계의 결함이다.
+7단계에서 장부는 이 층이 아니라 **전이 메서드 안**으로 갔다. 입구가 하나여도
+`Refund.approve` 를 admin 액션이 직접 부르면 이 층을 지나지 않기 때문이다.
+여기 남은 기록은 하나뿐이다 — 접수(`order.placed`)와 링크 발급
+(`payment_link.issued`). 둘 다 전이 메서드가 없는 사실이라 여기가 그 자리다.
 """
 
 from datetime import timedelta
@@ -25,36 +27,36 @@ from .tokens import payment_token
 from .verdict import Verdict
 
 
+@transaction.atomic
 def intake_order(customer, lines, shipping):
     """주문을 접수한다 — 결제 대기 상태의 주문 하나.
 
     `lines` 는 `[(Product, 수량)]`. 상품명·단가는 지금 값을 스냅샷으로 박는다.
 
-    장부는 `atomic` **밖에서** 적는다 — 트랜잭션이 끝난 뒤라 "정말 남았는지"
-    확인하고 적는 것처럼 보인다. 그런데 여기서 프로세스가 죽으면 주문은 있고
-    장부에는 없다. 사실과 기록이 다른 트랜잭션에 있으면 둘은 언제든 갈린다.
+    장부는 **생성 뒤, 같은 트랜잭션 안**이다. 접수가 롤백되면 기록도 함께
+    되돌아간다 — 없는 주문의 접수 기록이 남는 일은 없다.
     """
-    with transaction.atomic():
-        order = Order.objects.create(
-            user=customer,
-            status=Order.Status.PENDING,
-            total_amount=sum(product.price * quantity for product, quantity in lines),
-            **shipping,
+    order = Order.objects.create(
+        user=customer,
+        status=Order.Status.PENDING,
+        total_amount=sum(product.price * quantity for product, quantity in lines),
+        **shipping,
+    )
+    for product, quantity in lines:
+        OrderItem.objects.create(
+            order=order,
+            product=product,
+            product_name=product.name,
+            unit_price=product.price,
+            quantity=quantity,
         )
-        for product, quantity in lines:
-            OrderItem.objects.create(
-                order=order,
-                product=product,
-                product_name=product.name,
-                unit_price=product.price,
-                quantity=quantity,
-            )
     Event.record(
         subject=order,
         transition=Event.Transition.ORDER_PLACED,
         kind=Event.Kind.ALLOW,
-        reason='주문을 접수했다.',
+        reason=f'주문 {order.order_number} 을(를) 접수했다.',
         after={'status': order.status, 'total_amount': order.total_amount},
+        actor=customer,
     )
     return order
 
@@ -72,17 +74,11 @@ def propose_refund(actor, order, amount, reason, idempotency_key=''):
 
     `idempotency_key` 는 클라이언트가 "이건 아까 그 요청이다"라고 말하는 방법이다.
     주면 재전송에 **그때의 답**이 돌아오고, 안 주면 두 번째 요청은 **지금 상태**를 듣는다.
+
+    **장부는 여기서 적지 않는다.** 제안이 실제로 만들어졌을 때만 사실이고,
+    그것을 아는 자리는 `Refund.apply` 안이다 — 거부·재전송·기존 건 응답은
+    세계를 바꾸지 않으므로 도메인 장부에 행이 없다(불린 사실은 `ToolCall`).
     """
-    # 장부를 **먼저** 적는다. 입구가 하나이므로 여기서 적으면 어느 문으로
-    # 들어와도 빠지지 않는다 — 그렇게 보인다.
-    Event.record(
-        subject=order,
-        transition=Event.Transition.REFUND_PROPOSED,
-        kind=Event.Kind.ALLOW,
-        reason=f'{order.order_number} 환불 {amount:,}원을 제안했다.',
-        after={'status': Refund.Status.PROPOSED, 'amount': amount},
-        actor=actor,
-    )
     return Refund.apply(
         order=order,
         amount=amount,
@@ -92,34 +88,16 @@ def propose_refund(actor, order, amount, reason, idempotency_key=''):
     )
 
 
-def pay_order(order):
+def pay_order(actor, order):
     """결제 처리한다. 전이 계약이 거부하면 그 판정을 그대로 돌려준다.
 
-    장부는 여기서 적는다 — 전이 메서드를 부르기 **전에**, 트랜잭션 **밖에서**.
-    무엇을 할 것인지 알고 있으므로 미리 적어 두는 것이고, 그러면 어느 갈래로
-    끝나든 기록이 빠질 일이 없다.
+    `actor` 는 **결제를 확정한 사람**이다. 6단계부터 그 사람은 고객이고,
+    결제 페이지가 `request.user` 를 여기로 넘긴다(7단계). 장부는 이 층이
+    아니라 `Order.mark_paid` 안에서 적힌다 — 사실이 나는 자리가 기록의
+    자리다.
     """
-    Event.record(
-        subject=order,
-        transition=Event.Transition.ORDER_PAID,
-        kind=Event.Kind.ALLOW,
-        reason=f'{order.order_number} 을(를) 결제 완료로 옮긴다.',
-        before={'status': order.status},
-        after={'status': Order.Status.PAID},
-    )
-    for item in order.items.select_related('product'):
-        if item.product is None:
-            continue
-        Event.record(
-            subject=item.product,
-            transition=Event.Transition.STOCK_DEDUCTED,
-            kind=Event.Kind.ALLOW,
-            reason=f'{item.product_name} {item.quantity}개를 차감한다.',
-            before={'stock': item.product.stock},
-            after={'stock': item.product.stock - item.quantity},
-        )
     try:
-        order.mark_paid()
+        order.mark_paid(actor)
     except InvalidTransition as denied:
         return denied.verdict
     return Verdict(
@@ -141,18 +119,8 @@ def issue_payment_link(actor, order):
 
     발급 사실은 장부에 남는다 — 6단계에서 자리만 뚫어 두었던 `actor` 인자가
     여기서 쓰인다("누가 링크를 발급했나"). 링크 자체는 여전히 무상태다.
-
-    다만 **판정보다 먼저** 적는다. 발급 판정이 DENY 로 끝나도 장부에는
-    "발급했다" 가 남는다.
+    발급이 **일어났을 때만**, 즉 격상 판정 뒤에 적는다.
     """
-    Event.record(
-        subject=order,
-        transition=Event.Transition.PAYMENT_LINK_ISSUED,
-        kind=Event.Kind.ESCALATE,
-        rule_ids=[PAY_001],
-        reason=f'{order.order_number} 의 결제 링크를 발급한다 — 확정은 고객이 한다.',
-        actor=actor,
-    )
     if order.status != Order.Status.PENDING:
         return (
             Verdict(
@@ -166,18 +134,28 @@ def issue_payment_link(actor, order):
             ),
             None,
         )
-    return (
-        Verdict(
-            kind=Verdict.ESCALATE,
-            rule_ids=[PAY_001],
-            reason=(
-                f'{PAY_001}: 결제는 고객이 한다. 결제 링크를 발급했다 — '
-                f'1시간 안에 고객이 결제해야 한다. {RULE_TEXTS[PAY_001]}'
-            ),
-            alternatives=['고객에게 링크를 안내하고 결제 완료를 주문 조회로 확인한다'],
+    payment = _payment_payload(order)
+    verdict = Verdict(
+        kind=Verdict.ESCALATE,
+        rule_ids=[PAY_001],
+        reason=(
+            f'{PAY_001}: 결제는 고객이 한다. 결제 링크를 발급했다 — '
+            f'1시간 안에 고객이 결제해야 한다. {RULE_TEXTS[PAY_001]}'
         ),
-        _payment_payload(order),
+        alternatives=['고객에게 링크를 안내하고 결제 완료를 주문 조회로 확인한다'],
     )
+    # **격상일 때만** 적는다. 발급하지 않은 링크가 장부에 남으면, 장부는
+    # 일어난 일이 아니라 시도된 일을 적은 것이다.
+    Event.record(
+        subject=order,
+        transition=Event.Transition.PAYMENT_LINK_ISSUED,
+        kind=Event.Kind.ESCALATE,
+        rule_ids=[PAY_001],
+        reason=verdict.reason,
+        after={'expires_at': payment['expires_at']},
+        actor=actor,
+    )
+    return verdict, payment
 
 
 def _payment_payload(order):
