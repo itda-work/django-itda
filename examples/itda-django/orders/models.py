@@ -111,8 +111,9 @@ class Order(models.Model):
         모르는 것을 장부가 알 수는 없다.
 
         `paid_at` 은 상태 UPDATE 와 **같은 문장**에서 채운다. 두 문장으로
-        나누면 그 사이에 "결제됐는데 결제 시각이 없는" 행이 존재하고,
-        그 순간 `CheckConstraint` 가 지키는 것이 없어진다.
+        나눌 수 **없다** — 제약(`order_paid_has_paid_at`)이 살아 있는 한
+        "결제됐는데 결제 시각이 없는" 첫 번째 UPDATE 를 DB 가 거절하기
+        때문이다. 제약이 무력해지는 것이 아니라, 제약이 같은 문장을 강제한다.
 
         장부는 **사실 뒤에** 적는다(LEDGER-001@v1). rowcount 를 본 뒤, 재고를
         깎은 뒤다. 같은 `atomic` 안이라 무엇 하나가 실패하면 기록도 함께
@@ -152,13 +153,28 @@ class Order(models.Model):
                     )
                 # `updated` 를 본 **뒤**다. 깎이지 않은 재고를 깎았다고 적으면
                 # 그건 4단계의 rowcount 버그를 장부에 옮겨 놓는 것이다.
+                #
+                # 값은 **재조회**한다. `select_related` 로 읽어 둔 스냅샷
+                # (`item.product.stock`)을 쓰면 같은 상품이 두 품목인 주문에서
+                # 둘 다 최초 값을 적는다 — 실제로는 20→18 인데 장부에는
+                # 20→19 가 두 줄 남는다(sol 리뷰 발견 1, 실측 반례).
+                # 방금 쏜 조건부 UPDATE 가 그 행의 잠금을 쥔 채이므로, 같은
+                # 트랜잭션에서 다시 읽은 값이 **차감 직후의 사실**이다.
+                after = (
+                    Product.objects.filter(pk=item.product.pk)
+                    .values_list('stock', flat=True)
+                    .get()
+                )
+                # `before` 는 사실에서 거꾸로 센다. 이 트랜잭션이 방금 깎은
+                # 양만큼 되돌린 값이 차감 직전이다.
+                before = after + item.quantity
                 Event.record(
                     subject=item.product,
                     transition=Event.Transition.STOCK_DEDUCTED,
                     kind=Event.Kind.ALLOW,
                     reason=f'{item.product_name} {item.quantity}개를 차감했다.',
-                    before={'stock': item.product.stock},
-                    after={'stock': item.product.stock - item.quantity},
+                    before={'stock': before},
+                    after={'stock': after},
                     actor=actor,
                 )
             # 상태는 위에서 이미 옮겼다. 여기서는 메모리 위의 객체만 맞춰 준다.
@@ -537,7 +553,15 @@ class Refund(models.Model):
             self.decided_via = decided_via
             self.decided_at = decided_at
 
-            was = self.order.status
+            # 주문 상태는 **DB 에서 다시 읽는다.** `self.order` 는 이 환불
+            # 객체를 만들 때 함께 읽힌 캐시라, 그 사이에 주문이 움직였으면
+            # 장부에 취소 직전이 아닌 옛 상태가 남는다(sol 리뷰 발견 2).
+            # 같은 트랜잭션이라는 사실만으로 스냅샷이 정확해지지는 않는다.
+            # 취소 자체는 이 값과 무관하게 진행한다 — 환불이 승인된 주문은
+            # 어느 상태였든 취소로 간다.
+            was = Order.objects.filter(pk=self.order.pk).values_list(
+                'status', flat=True
+            ).get()
             self.order.status = Order.Status.CANCELLED
             self.order.save(update_fields=['status', 'updated_at'])
 

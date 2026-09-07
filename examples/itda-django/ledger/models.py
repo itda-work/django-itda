@@ -69,6 +69,9 @@ class Event(models.Model):
         ADMIN = 'admin', 'admin'
         CUSTOMER = 'customer', '고객의 문'
         SHELL = 'shell', 'shell'
+        WEB = 'web', '문 표 밖'
+        # 미들웨어의 기본값이다 — 위 표 어디에도 해당하지 않는 HTTP 요청.
+        # 표에 없는 값을 문맥이 실어 나르면 choices 와 데이터가 갈린다.
 
     class Kind(models.TextChoices):
         """그 사실을 만든 판정. **DENY 는 없다** — 거부는 세계를 바꾸지 않는다."""
@@ -89,20 +92,25 @@ class Event(models.Model):
         PAYMENT_LINK_ISSUED = 'payment_link.issued', '결제 링크 발급'
 
     at = models.DateTimeField('기록 시각', default=timezone.now, db_index=True)
-    # `auto_now_add` 가 아니다 — 그러면 시각을 INSERT 가 정하고, 전이 메서드가
-    # 정한 시각과 미세하게 갈린다. 장부의 시각은 사실의 시각이어야 한다.
+    # **기록 시각**이다 — 사실의 시각이 아니다. 사실의 시각(결제 시각 같은 것)은
+    # 그 사실 자신의 값이라 `after` 에 있다(`order.paid` 의 `after['paid_at']`).
+    # `auto_now_add` 가 아닌 것은 시각을 INSERT 가 정하지 않게 하기 위해서다.
     door = models.CharField('문', max_length=20, choices=Door.choices, blank=True, default='')
     call_id = models.CharField('호출 ID', max_length=32, blank=True, default='', db_index=True)
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         verbose_name='자리',
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='ledger_events',
     )
-    # 계정이 지워져도 이름은 남는다. `SET_NULL` 뒤에 "누가" 가 통째로 사라지면
-    # 그건 장부가 아니라 외래키다.
+    # `PROTECT` 다 — **장부에 남은 계정은 지울 수 없다.** `SET_NULL` 이면
+    # 삭제가 장부 행을 UPDATE 하려 들고, append-only 트리거가 그것을 거절해
+    # `IntegrityError` 가 난다(sol 리뷰 발견 3). 장부가 고쳐지지 않는다는 법과
+    # 계정 삭제는 동시에 성립하지 않는다 — 여기서는 장부가 이긴다.
+    # 익명화·삭제 정책(운영이 실제로 필요로 하는 것)은 8단계다.
+    # `actor_label` 은 그래도 남긴다 — 이름은 바뀌지만 그때 적힌 이름이 사실이다.
     actor_label = models.CharField('자리 이름', max_length=50, blank=True, default='')
     subject_type = models.ForeignKey(
         ContentType, verbose_name='대상 종류', on_delete=models.PROTECT

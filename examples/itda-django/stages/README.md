@@ -239,8 +239,9 @@ contract 를 먼저 적용하면 `migrate` 가 깨진다. 그 실패가 이 단�
 
 숫자를 읽을 때 조심할 것은 앞 단계들과 같다. **LOC 는 변경량이지 효율의
 증명이 아니다.** `LEDGER-001@v1` 이 **어디까지** 지키는지는 `RULES.md` 의
-"적용 경로 / 우회 가능 경로" 열이 답하고, 그 칸에는 시행 면 셋 중
-**삭제만 우회로가 열려 있다**고 적혀 있다.
+"적용 경로 / 우회 가능 경로" 열이 답하고, 그 칸에는 셋 중 **갱신 금지만
+경로 무관**이며 나머지가 SQL 로 어디까지 열려 있는지(삭제 · `INSERT OR
+REPLACE` · 직접 `INSERT` · 트리거 제거 · 전이 밖 직접 UPDATE)가 적혀 있다.
 
 ### 7단계 재현 명령
 
@@ -314,4 +315,6 @@ git show --numstat --format= 60b4e19 -- django_itda docs tests pyproject.toml | 
 - 2026-09-07 — 6단계에서 결제 주체가 고객으로 바뀌면서 `tests/stage_05_contention.py::test_동시_결제_두_개_중_하나만_통과한다_HTTP` 를 **결제 페이지 POST**(주문자 bob 의 탭 둘)로 옮겼다. AI 직원 토큰의 `POST /api/orders/<pk>/pay/` 는 이제 링크만 준다(202). 재는 것은 그대로다 — UPDATE 경합을 rowcount 계약이 버티는가. 같은 파일의 잠금·스키마 오류 테스트도 패치 지점을 `orders.services.issue_payment_link` 로 옮겼다. **태그 `stage-05-*` 는 이동하지 않는다**(옛 태그를 checkout 하면 옛 문으로 도는 옛 테스트가 그대로 있다).
 - 2026-09-07 — 6단계 태그 부착: `stage-06-start`=`99d26d9`, `stage-06-done`=`5600f32`(독립 검증 반영 커밋 — 리뷰 반영은 학생 diff 에 포함). 비용표는 그 두 태그로 재산출(앱 코드 +198 −19 · 문서 7파일 +408 −22 · 전체 12파일 +606 −41). 이 갱신 커밋 자체는 태그 뒤의 문서 커밋이라 표 밖이다.
 - 2026-09-07 — 7단계에서 결제 전이가 자리를 받는다: `Order.mark_paid()` → **`mark_paid(actor)`**, `services.pay_order(order)` → **`pay_order(actor, order)`**. 부르는 자리 셋(결제 페이지 · `just race pay` · `tests/stage_04_transition_contract.py`)을 함께 고쳤다. 같은 파일의 `_order()` fixture 는 결제 완료 이후 상태의 주문에 `paid_at` 을 채운다(`order_paid_has_paid_at`). 재는 것은 그대로다 — 전이 계약이 조건 불일치를 거부하는가. **태그 `stage-04-*` 는 이동하지 않는다.**
+- 2026-09-07 — 7단계 채점표는 sol 적대 리뷰 반영으로 **done 에서 보강**했다(18개 → 22개: 같은 상품 두 품목의 재고 장부 · 취소 `before` 의 재조회 · 장부에 남은 계정 삭제(`PROTECT`) · 기존 행 backfill). 2번은 `stock.deducted` 값 단언이, 15번은 `door` 단언이 늘었고, 1·2·16 은 시그니처 적응 헬퍼(`_pay`)로 부른다 — 시작 상태의 실패 사유가 `TypeError` 가 아니라 장부의 거짓이 되게. **`stage-07-start` 태그의 채점표는 원판(18개)이다** — 채점표는 start 와 done 이 같은 파일이어야 한다는 규율의 예외이고, 태그 부착 시점에 판단한다.
+- 2026-09-07 — `Event.actor` 를 `SET_NULL` → **`PROTECT`** 로 바꿨다(`ledger/0003`). `SET_NULL` 은 계정 삭제 때 장부 행을 UPDATE 하려 들어 append-only 트리거에 걸린다 — 장부 불변과 계정 삭제는 동시에 성립하지 않는다. 같은 마이그레이션에서 `Event.Door.WEB`(미들웨어 기본 문)을 choices 에 넣었다. 태그 이동 없음(7단계 안의 수정이다).
 - 2026-09-07 — `OrderAdmin.readonly_fields` 에 `paid_at` 을 넣었다. 결제 시각은 일어난 일이지 점주가 정하는 값이 아니고, 폼에 열어 두면 상태만 바꿔 저장하는 순간 결제 시각이 지워져 제약이 거절한다(2단계 `LogEntry` 테스트가 그 경로를 지난다 — 그 테스트는 **고치지 않았다**).

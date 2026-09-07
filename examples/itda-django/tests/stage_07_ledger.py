@@ -1,9 +1,11 @@
 """7단계 — 기록: 장부의 세 질문 — 사실 뒤에 적는가, 같은 트랜잭션인가, 고칠 수 없는가.
 그리고 `paid_at` 의 원가.
 
-시작 상태(`stage-07-start`)에서 18개 중 **16개가 실패**한다. 통과하는 둘(12·13)은
+이 파일(22개)을 시작 상태 코드에 얹으면 **20개가 실패**한다. 통과하는 둘
+(`test_도구_호출과_장부는_같은_call_id_로_잇닿는다`·`test_장부는_고칠_수_없다_모델_층`)은
 채점이 아니라 **준비 확인**이다 — 호출 문맥(django-itda v0.2)과 모델 층의 거부는
-시작 상태에 이미 있다. 없는 것은 셋이다.
+시작 상태에 이미 있다. (`stage-07-start` 태그에 붙어 있는 것은 18개짜리 원판이다 —
+sol 리뷰 반영으로 넷이 늘었다. `stages/README.md` 사후 변경 참조.) 없는 것은 셋이다.
 
     (a) `mark_paid()` 가 누가 결제했는지 받지 않는다
     (b) 장부가 **사실 전에, 트랜잭션 밖에서** 적힌다 — 의도를 사실로 적는다
@@ -24,10 +26,13 @@ from urllib.parse import urlparse
 import pytest
 from django.contrib.admin.models import LogEntry
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
+from django.db.migrations.executor import MigrationExecutor
+from django.db.models import ProtectedError
 from django.test import Client
 from django.utils import timezone
 
+from django_itda.context import bind_call
 from django_itda.models import ToolCall
 from ledger.models import Event, LedgerImmutable
 from orders import services
@@ -133,6 +138,25 @@ def limited():
     return Product.objects.get(name='한정판 흑임자 다쿠아즈')
 
 
+def stamps():
+    """재고 20개짜리 상품 — 같은 상품을 두 품목으로 담아 볼 자리."""
+    return Product.objects.get(name='스탬프 세트 12종')
+
+
+def _pay(actor, order):
+    """`pay_order` 를 부른다 — 시그니처가 어느 쪽이든.
+
+    시작 상태의 `pay_order(order)` 에는 자리가 없다. 그대로 부르면 이 테스트들이
+    `TypeError` 로 죽어서, 실패 사유가 "장부가 거짓을 적었다"가 아니라 "인자
+    개수가 다르다"가 된다. 여기서 재는 것은 장부지 시그니처가 아니다 —
+    자리(`actor`)를 재는 것은 `test_결제_사실은_누가_언제_어느_문으로` 다.
+    """
+    try:
+        return services.pay_order(actor, order)
+    except TypeError:
+        return services.pay_order(order)
+
+
 # --- 1. 사실 뒤에 적는가 --------------------------------------------------------
 
 
@@ -145,7 +169,7 @@ def test_거부된_결제는_장부에_없다(ai, world):
     """
     paid = order('SEED-0002')
 
-    verdict = services.pay_order(ai, paid)
+    verdict = _pay(ai, paid)
 
     assert verdict.kind == Verdict.DENY
     assert verdict.rule_ids == [ORDER_001]
@@ -163,17 +187,47 @@ def test_재고_부족이면_차감_기록도_없다(ai, bob, world):
         'recipient_name': '박밥', 'phone': '010-0000-0002', 'address': '부산시 가상구 없는동 2-2',
     })
 
-    services.pay_order(ai, first)
+    _pay(ai, first)
     with pytest.raises(InsufficientStock):
-        services.pay_order(ai, second)
+        _pay(ai, second)
 
     assert Product.objects.get(pk=product.pk).stock == 0
-    assert len(events(Event.Transition.STOCK_DEDUCTED)) == 1, (
+    deducted = events(Event.Transition.STOCK_DEDUCTED)
+    assert len(deducted) == 1, (
         '차감되지 않은 재고를 차감했다고 적으면 장부가 rowcount 를 무시한 것이다.'
     )
+    # 행 수만 세면 값이 틀린 장부를 통과시킨다 — 세계는 1→0 인데 장부가
+    # 999→998 이라고 적어도 한 줄은 한 줄이다.
+    assert deducted[0].before == {'stock': 1}
+    assert deducted[0].after == {'stock': 0}
     second.refresh_from_db()
     assert second.status == Order.Status.PENDING
     assert len(events(Event.Transition.ORDER_PAID)) == 1
+
+
+@pytest.mark.django_db
+def test_같은_상품_두_품목이면_차감은_이어서_적힌다(bob, world):
+    """한 주문에 같은 상품이 두 줄이면, 장부의 두 줄도 **이어져야** 한다.
+
+    읽어 둔 상품 객체(`select_related` 스냅샷)로 값을 적으면 두 줄 다 최초
+    재고를 말한다 — 세계는 20→18 인데 장부는 20→19 가 두 번이다. 경쟁
+    트랜잭션 없이 재현되는 거짓이라 "SQLite 는 갈리지 않는다"로 덮을 수 없다.
+    """
+    product = stamps()
+    assert product.stock == 20
+    target = services.intake_order(bob, [(product, 1), (product, 1)], {
+        'recipient_name': '박밥', 'phone': '010-0000-0002', 'address': '부산시 가상구 없는동 2-2',
+    })
+
+    _pay(bob, target)
+
+    rows = events(Event.Transition.STOCK_DEDUCTED)
+    assert len(rows) == 2
+    assert [(row.before, row.after) for row in rows] == [
+        ({'stock': 20}, {'stock': 19}),
+        ({'stock': 19}, {'stock': 18}),
+    ], '두 줄이 같은 before 를 말하면 그중 하나는 거짓이다.'
+    assert Product.objects.get(pk=product.pk).stock == 18
 
 
 @pytest.mark.django_db
@@ -188,7 +242,7 @@ def test_결제_사실은_누가_언제_어느_문으로(ai, seed4):
     assert len(rows) == 1
     paid = rows[0]
     assert paid.actor is not None and paid.actor.username == 'bob'
-    assert paid.actor_label == 'bob', '계정이 지워져도 이름은 남아야 한다.'
+    assert paid.actor_label == 'bob', '그때 적힌 이름은 이름이 바뀌어도 그대로다.'
     assert paid.door == Event.Door.CUSTOMER, '어느 문으로 들어왔는지가 발견 3 의 답이다.'
     assert paid.kind == Event.Kind.ALLOW
     assert paid.before == {'status': Order.Status.PENDING}
@@ -221,6 +275,37 @@ def test_시드된_결제_주문은_backfill_로_paid_at을_가진다(world):
         row = order(number)
         assert row.paid_at == row.created_at, f'{number} 의 결제 시각이 비어 있다.'
     assert order('SEED-0004').paid_at is None, '결제 대기 주문에는 결제 시각이 없다.'
+
+
+@pytest.mark.django_db(transaction=True)
+def test_backfill_은_기존_행을_채운다(world):
+    """backfill 이 진짜로 재는 것은 **이미 있던 행**이다.
+
+    시드는 지금 `paid_at` 을 채워서 심는다. 그래서 시드만 보는 시험은
+    `0006` 의 `RunPython` 이 아무것도 하지 않아도 통과한다. 마이그레이션을
+    `0005` 까지 되돌려 장부 이전의 행(결제 완료인데 결제 시각 없음)을 만들고,
+    `0007` 까지 다시 올려 본다 — contract 가 통과한다는 것 자체가 backfill 이
+    일했다는 증거다.
+
+    되돌리기가 실제 결제 시각을 지우지 않는지도 여기서 함께 본다
+    (`0006` 의 역방향은 `RunPython.noop` 이다).
+    """
+    executor = MigrationExecutor(connection)
+    executor.migrate([('orders', '0005_order_paid_at')])
+
+    kept = order('SEED-0001')
+    assert kept.paid_at is not None, '되돌리며 지우는 backfill 은 관측값까지 지운다.'
+
+    target = order('SEED-0002')
+    Order.objects.filter(pk=target.pk).update(paid_at=None)
+
+    executor = MigrationExecutor(connection)
+    executor.loader.build_graph()
+    executor.migrate([('orders', '0007_order_paid_has_paid_at')])
+
+    target.refresh_from_db()
+    assert target.paid_at == target.created_at, '기존 행이 채워지지 않았다.'
+    assert order('SEED-0004').paid_at is None, '결제 대기 주문은 채우지 않는다.'
 
 
 @pytest.mark.django_db
@@ -320,6 +405,28 @@ def test_admin_승인은_장부에_남는다_LogEntry는_여전히_0(ai, owner, 
 
 
 @pytest.mark.django_db
+def test_취소의_before는_취소_직전의_DB_상태다(ai, owner, world):
+    """`order.cancelled` 의 `before` 는 **DB 에서 다시 읽은** 상태여야 한다.
+
+    환불 객체가 들고 있는 `self.order` 는 제안 시점의 캐시다. 그 사이에 주문이
+    움직였으면(배송 시작 같은 일) 캐시로 적은 장부는 취소 직전이 아닌 옛 상태를
+    말한다 — 같은 트랜잭션이라는 사실만으로 스냅샷이 정확해지지는 않는다.
+    """
+    target = order('SEED-0002')
+    _verdict, outcome = services.propose_refund(ai, target, target.total_amount, '고객 요청')
+    Order.objects.filter(pk=target.pk).update(status=Order.Status.SHIPPING)
+
+    outcome.refund.approve(owner)
+
+    cancelled = events(Event.Transition.ORDER_CANCELLED)
+    assert len(cancelled) == 1
+    assert cancelled[0].before == {'status': Order.Status.SHIPPING}
+    assert cancelled[0].after == {'status': Order.Status.CANCELLED}
+    target.refresh_from_db()
+    assert target.status == Order.Status.CANCELLED, '취소는 이전 상태와 무관하게 진행한다.'
+
+
+@pytest.mark.django_db
 def test_규칙_확정은_actor_없이_남는다(ai, world):
     """규칙이 확정하면 사람 칸은 **비어 있다.** 빠진 값이 아니라 사실이다."""
     target = order('SEED-0003')
@@ -409,17 +516,36 @@ def test_장부는_고칠_수_없다_DB_층(recorded):
     assert Event.objects.get(pk=recorded.pk).reason == '장부 시험용 한 줄.'
 
 
+@pytest.mark.django_db
+def test_장부에_남은_계정은_지울_수_없다(recorded, ai):
+    """장부 불변과 계정 삭제는 동시에 성립하지 않는다 — **장부가 이긴다.**
+
+    `SET_NULL` 이면 삭제가 장부 행을 UPDATE 하려 들고 append-only 트리거가
+    그것을 거절한다(`IntegrityError`). 계약을 정해 `PROTECT` 로 둔다.
+    익명화·삭제 정책은 8단계(운영)의 몫이다.
+    """
+    with pytest.raises(ProtectedError), transaction.atomic():
+        ai.delete()
+
+    assert Event.objects.filter(pk=recorded.pk).exists()
+    assert Event.objects.get(pk=recorded.pk).actor_id == ai.pk
+
+
 # --- 6. 링크 발급 ---------------------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_링크_발급은_격상일_때만_남고_actor가_있다(ai, seed4):
     """6단계가 자리만 뚫어 두었던 `actor` 인자가 여기서 쓰인다."""
-    services.issue_payment_link(ai, seed4)
+    with bind_call('c' * 32, Event.Door.MCP, ai):
+        services.issue_payment_link(ai, seed4)
 
     rows = events(Event.Transition.PAYMENT_LINK_ISSUED)
     assert len(rows) == 1
     assert rows[0].actor == ai, '누가 링크를 발급했나 — 6단계에는 답이 없었다.'
+    # 자리만 보면 문이 틀려도 통과한다 — 발급은 AI 직원의 문에서 일어났다.
+    assert rows[0].door == Event.Door.MCP
+    assert rows[0].call_id == 'c' * 32
     assert rows[0].kind == Event.Kind.ESCALATE
     assert rows[0].rule_ids == [PAY_001]
     assert rows[0].after['expires_at']
@@ -454,7 +580,7 @@ def test_같은_트랜잭션이다(ai, bob, seed4):
 
     with mock.patch.object(Event, 'record', flaky):
         with pytest.raises(RuntimeError):
-            services.pay_order(bob, seed4)
+            _pay(bob, seed4)
 
     seed4.refresh_from_db()
     assert seed4.status == Order.Status.PENDING, '장부가 터졌는데 세계만 움직이면 안 된다.'

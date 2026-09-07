@@ -4,9 +4,12 @@
 마이그레이션(contract)을 이것 없이 적용하면 시드 주문에서 `IntegrityError` 가
 난다. 그 실패가 이 단계의 '원가계산' 이다.
 
-**취소 주문은 건드리지 않는다.** 결제 뒤 취소인지 결제 전 취소인지, 장부가
-없던 시절의 행에 대해서는 **알 수 없다.** 모름을 모름으로 둔다 — 여기서
-`created_at` 을 채워 넣으면 그 순간 장부가 아니라 추측이 데이터가 된다.
+**취소 주문은 건드리지 않는다.** 결제 뒤 취소인지 결제 전 취소인지, 지금
+DB 에 남은 것만으로는 **일괄 복원할 근거가 없다.** `Refund.decided_at` 은
+환불 결정 시각이지 결제 시각이 아니고, 현재 환불 판정은 결제 대기 주문도
+허용한다. 모름을 모름으로 둔다 — 여기서 `created_at` 을 채워 넣으면 그 순간
+장부가 아니라 추측이 데이터가 된다. (DB 밖의 근거 — 과거 실접속 기록 같은 것 —
+으로 개별 주문의 결제를 아는 것은 별개다. 여기서 하지 않을 뿐이다.)
 
 결제 시각을 `created_at` 으로 보는 것은 4단계 `Refund.decide` 가 주석으로
 적어 둔 교육상 가정이다. 그 가정이 여기서 **데이터**가 된다.
@@ -24,13 +27,11 @@ def fill(apps, schema_editor):
         Order.objects.filter(pk=order.pk).update(paid_at=order.created_at)
 
 
-def unfill(apps, schema_editor):
-    """되돌리면 결제 시각을 비운다 — 확정 정보가 아니라 채워 넣은 값이기 때문이다."""
-    Order = apps.get_model('orders', 'Order')
-    Order.objects.filter(status__in=AFTER_PAYMENT).update(paid_at=None)
-
-
 class Migration(migrations.Migration):
     dependencies = [('orders', '0005_order_paid_at')]
 
-    operations = [migrations.RunPython(fill, unfill)]
+    # 역방향은 **아무것도 하지 않는다.** 되돌리며 지우는 backfill 은 자기가
+    # 채운 행과 그 뒤에 실제로 결제된 행을 구별하지 못해서, 관측된 결제 시각까지
+    # NULL 로 만든다(sol 리뷰 발견 4, 실측). 데이터 마이그레이션은 앞으로만
+    # 간다 — expand 를 되돌리면 열 자체가 사라지는 것은 스키마의 일이고 별개다.
+    operations = [migrations.RunPython(fill, migrations.RunPython.noop)]
