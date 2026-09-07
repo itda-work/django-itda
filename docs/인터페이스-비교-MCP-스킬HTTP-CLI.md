@@ -8,15 +8,28 @@
 
 > 문이 셋이어도 판정은 하나여야 한다. 비교할 것은 "모델이 규칙 ID 를 읽고 멈추는가 · 승인을 기다릴 수 있는가 · 세계가 문마다 다른 말을 하지 않는가 · 그 비용이 얼마인가" 다.
 
-## 1. 세 후보
+## 1. 후보 — 축이 둘이다: 문 × 사용법 전달 (× 인증)
 
-| 면 | 무엇인가 | itda-django 의 현재 |
+"MCP vs 스킬+HTTP vs CLI" 는 축을 뭉갠 표현이다(마스터 지적 2026-09-07). 실제로는 세 축이 독립이다.
+
+| 축 | 값 |
+|---|---|
+| **문**(모델이 세계를 부르는 통로) | MCP 도구 호출 · HTTP 요청 · 셸 명령(CLI) |
+| **사용법 전달**(모델이 "무엇을 어떻게 부르는가" 를 아는 방법) | 프로토콜 스키마(MCP `tools/list`) · 스킬 문서(`SKILL.md`, 필요할 때 로드) · `--help`/`man` |
+| **인증**(그 호출이 **누구의 자리**인가) | 정적 토큰(서비스 계정) · 세션 쿠키(브라우저) · **OAuth**(사람이 위임한 신원 + 스코프) — §2-1 |
+
+조합 중 실제로 성립하는 것:
+
+| 조합 | 무엇인가 | itda-django 의 현재 |
 |---|---|---|
-| **A. MCP 도구면** | 서버가 도구 목록·스키마를 내놓고, 클라이언트(Claude Code/Desktop·Codex·Cursor…)가 프로토콜로 호출. stdio(로컬) 또는 Streamable HTTP(원격) | **있음** — `manage.py mcp_stdio`(패키지, in-process) + `agent/live/mcp_server.py`(임시, HTTP 클라이언트). 관찰 2차 완료 |
-| **B. 스킬 + HTTP API** | 사용법을 `SKILL.md`(자연어 + 예시 요청)로 주고, 모델이 `curl`/`httpx` 로 JSON API 를 부른다. 프로토콜 없음 | **반쪽** — `/api/` JSON 과 Bearer 토큰은 있다. `SKILL.md` 가 없다. 모델이 직접 curl 로 부른 관찰 없음 |
-| **C. CLI** | 명령줄 도구(`manage.py …` 또는 독립 실행 파일)를 모델이 셸에서 부른다. 사용법은 `--help` 와 스킬 문서 | **없음** — `race`·`ledger`·`issue_token` 은 운영 명령이지 AI 직원의 문이 아니다 |
+| **A. MCP + 스키마**(+선택 스킬) | 서버가 도구 목록·스키마를 주고 클라이언트가 프로토콜로 호출. 스킬은 "이 도구들을 이 순서로" 같은 절차만 보탠다 | **있음** — `manage.py mcp_stdio`(패키지) + 임시 서버. 관찰 2차 완료 |
+| **B. 스킬 + HTTP** | `SKILL.md` 가 엔드포인트·판정 규약·`Idempotency-Key`·승인 핸들 사용법을 가르치고, 모델이 `curl`/`httpx` 로 부른다 | **반쪽** — `/api/`·Bearer 있음, `SKILL.md` 없음 |
+| **C. 스킬 + CLI** | 스킬이 명령·플래그·종료 코드 규약을 가르치고 모델이 셸에서 부른다. `--help` 는 보조다 — **스킬 없는 CLI 는 발견성이 없다**(모델이 명령의 존재를 모른다) | **없음** |
+| C-1. in-process CLI | `manage.py world <도구> …` — 세계 코드가 모델의 머신에서 돈다(DB 가 곧 세계) | — |
+| C-2. 원격 클라이언트 CLI | `world <도구> …` 바이너리가 HTTP 를 부른다 — `gh` 패턴. 세계는 서버, 로그인은 `world login`(OAuth 디바이스 플로) | — |
+| D. MCP 원격(Streamable HTTP) + OAuth | ChatGPT·원격 클라이언트용. 스펙이 OAuth 2.1 을 요구한다 | — (벤치마킹 §7.4: RS 는 fastmcp 것, AS 는 django-oauth-toolkit) |
 
-세 면의 공통 뿌리는 **`django_itda.tools.Toolset` 선언 하나**여야 한다. A 는 이미 그 선언에서 나온다. B·C 도 같은 선언에서 생성되면 "문마다 다른 말" 이 구조적으로 불가능해진다 — 그것이 이 실험이 django-itda 에 주는 사양 입력이다(§5).
+세 문의 공통 뿌리는 **`django_itda.tools.Toolset` 선언 하나**여야 한다. A 는 이미 그 선언에서 나온다. B·C 도 같은 선언에서 생성되면 "문마다 다른 말" 이 구조적으로 불가능해진다 — 그것이 이 실험이 django-itda 에 주는 사양 입력이다(§5). 스킬 문서도 선언에서 뽑는다(§5-3).
 
 ## 2. 비교 축 — 지금까지의 실측이 만든 질문들
 
@@ -26,7 +39,7 @@
 | **승인 핸들·폴링** | ③: `check_refund` 폴링으로 충분했다. 푸시는 없다 | 결과의 `handle`(check_tool·url). Tasks 는 미확인 | 응답 JSON 의 `handle` + 스킬 문서가 "이 URL 을 다시 GET 하라" 고 가르쳐야 한다 | 같은 JSON 을 stdout 으로. 스킬 문서 의존 |
 | **권한 = 가시성** | `approve_refund` 가 보이고 403 — 관찰 지점 | 목록 필터가 **옵션**(`visible_only`) | API 는 목록이 없다. 스킬 문서가 곧 목록 — 문서가 권한을 모른다 | `--help` 가 목록. 권한별 `--help` 는 별도 구현 |
 | **궤적** | 발견 3, 7단계 `Event.door` | `ToolCall` + `Event(door=mcp)` 자동 | `Event(door=api)` 는 남지만 **호출 궤적(거부·패자)** 은 없다(8단계 예약) | `Event(door=shell)` — 지금은 shell 과 구분이 안 된다. `door=cli` 가 필요 |
-| **인증** | 토큰은 자리까지, 권한은 따로 | 프로세스 = 자리 하나(환경변수 키) | 요청마다 Bearer — 키가 모델의 컨텍스트에 노출된다(스킬 문서·셸 히스토리) | 환경변수 또는 설정 파일. 키가 명령줄에 찍히면 노출 |
+| **인증**(§2-1) | 토큰은 자리까지, 권한은 따로 | stdio: 프로세스 = 자리 하나(환경변수 키). 원격: OAuth 필수 | 요청마다 Bearer — 키가 컨텍스트에 노출된다. OAuth 는 `world login` 같은 보조가 필요 | 환경변수·키링. OAuth 디바이스 플로가 가장 자연스럽다(`gh auth login`) |
 | **컨텍스트 비용** | 도구 7개 스키마 vs SKILL.md vs `--help` — 토큰으로 잰다(`token-bench`) | 도구 스키마가 매 세션 컨텍스트에 실린다(서버 instructions 포함) | SKILL.md 는 필요할 때만 로드(프로그레시브) | `--help` 는 부를 때만. 가장 싸다 |
 | **클라이언트 범위** | 누가 쓸 수 있나 | MCP 지원 클라이언트만. 등록 절차(`just live-setup` 이 그 비용의 증거) | 셸·HTTP 가 되는 모든 에이전트. 등록 0 | 셸이 되는 모든 에이전트. 설치 1(`uv run` 또는 바이너리) |
 | **오류 자기수정** | 규칙 ID·대안이 문장에 있어야 우회를 안 한다 | 오류 문장 그대로 | JSON 본문 그대로 — 모델이 `curl -s` 로 본문을 버리면 못 읽는다 | stderr 문장 — 모델이 stderr 를 보는가 |
@@ -34,6 +47,20 @@
 | **보안 경계** | 도구가 어디서 도는가 | stdio: 사용자 머신 안에서 세계 프로세스가 돈다(in-process 문은 DB 가 곧 세계) | 세계는 서버, 모델은 밖. 경계가 HTTP 라 가장 명확 | 사용자 머신에서 세계 코드가 실행된다(가장 넓은 권한) |
 | **테스트·재현** | fixture 채점과 실접속 분리 | 도구 호출 = `Toolset.call` 단위 테스트 | HTTP = `Client()` 회귀 테스트(있음) | `call_command` 테스트 |
 | **실패 모양** | 5단계 503, 8단계 500 번역 | 도구 오류 문장 | HTTP 코드(503·500 그대로 보인다) | 종료 코드·트레이스백 — 가장 날것 |
+
+### 2-1. 인증 축 — 자리를 누가 주는가
+
+지금까지 모든 문은 **정적 토큰 = 서비스 계정 `ai-staff`** 다. 자리가 하나이고, "AI 직원이 지금 누구를 대신하는가" 는 세계가 모른다(6단계에서 이월한 대행 스코핑의 뿌리). OAuth 는 이 그림을 바꾼다 — **사람이 자기 신원을 위임**하고, 위임의 범위가 **스코프**로 붙는다.
+
+| 인증 | 자리 | 권한의 출처 | 장부의 `actor` | 문별 실현 |
+|---|---|---|---|---|
+| 정적 토큰 | 서비스 계정(`ai-staff`) | 그 계정의 Django 권한 | `ai-staff` — 누구를 위해서인지 없음 | 셋 다 지금 그대로 |
+| 세션 쿠키 | 로그인한 사람 | 그 사람의 권한 | 사람 | 브라우저형 클라이언트만. 6단계 결제 페이지가 이것 |
+| **OAuth**(authorization code + PKCE / device) | **위임한 사람**(직원 alice) | 사람의 권한 **∩ 스코프**(`orders:refund.propose`…) | 사람 + "AI 가 대신" 표시 | MCP 원격: 스펙 표준(fastmcp `RemoteAuthProvider`). CLI: `world login` 디바이스 플로(`gh` 패턴). HTTP+스킬: 스킬 혼자 못 한다 — 브라우저 왕복이 필요하므로 CLI 의 로그인을 빌리거나 토큰을 사람이 붙여 넣는다 |
+
+OAuth 가 실험에 들어와야 하는 이유 셋: (1) 자리가 "서비스 계정" 에서 "사람의 위임" 으로 바뀌면 **판정의 입력이 달라진다** — `SCOPE-001` 의 "그 고객만" 이 토큰 안의 사람으로 결정된다. (2) 스코프 ↔ Django 권한 매핑이 **권한=가시성** 축의 실물이 된다(스코프 밖 도구는 목록에서 빠지는가). (3) 원격 MCP(D)·원격 CLI(C-2)는 OAuth 없이는 성립하지 않는다.
+
+만들지 않는 것은 벤치마킹 §7.4 그대로 — 인가 서버는 `django-oauth-toolkit`, RS 검증은 fastmcp 것. django-itda 가 더하는 것은 **스코프 → 권한 콜러블**과 **위임 표시**(`Event.actor` = 사람, `Event.after`/`ToolCall` 에 `delegated_via='oauth'`)뿐이다.
 
 가설(실측 전): **A 가 가장 정확하고 가장 비싸며, C 가 가장 싸고 가장 위험하고, B 가 중간**이다. 그러나 "모델이 규칙 ID 를 읽고 멈추는가" 는 면이 아니라 **오류 문장의 품질**이 좌우한다는 것이 4단계 이후의 일관된 관찰이라, 세 면의 차이가 생각보다 작을 수 있다. 그것을 재는 것이 실험이다.
 
@@ -49,6 +76,7 @@
   4. 준비 비용 — 등록·설치·문서 줄 수(비용표 방식, 재현 명령).
   5. 궤적 완전성 — 거부·패자가 어디에 남는가.
   6. 실패 모양 — 503·500·잘못된 인자를 모델이 어떻게 읽는가.
+- **인증 변주(실험 1')**: 같은 세 문을 OAuth 로 다시 돈다 — `django-oauth-toolkit` 로 인가 서버, 스코프 `orders:read`·`orders:refund.propose`·`orders:pay.link`. A-원격은 fastmcp `RemoteAuthProvider`, C 는 `world login`(디바이스 플로), B 는 C 의 토큰을 빌린다. 볼 것: 스코프 밖 도구가 목록에서 빠지는가, `Event.actor` 가 사람(alice)으로 남는가, 만료·재로그인을 모델이 어떻게 처리하는가.
 - **관찰자**: 마스터 + 별도 Claude 세션(Herdr pane). Codex 도 A·C 는 가능(MCP 지원·셸) — 클라이언트 둘 이상에서 같은 표를 채운다.
 - **기록**: `examples/itda-django/stages/live-실접속.md` 에 "면 비교 관찰" 절, 그리고 이 문서 §6 에 결론.
 
@@ -71,7 +99,9 @@
 1. **`Toolset` 하나 → 문 셋** — 이미 있는 fastmcp 어댑터 옆에 `adapters/http.py`(Django 뷰 생성: 도구 이름 → `POST /tools/<name>/`, 같은 결과 모양·같은 상태 코드 규칙, Bearer 는 프로젝트의 `AUTHENTICATE`)와 `adapters/cli.py`(`manage.py world <name> --arg …` — 인자 스키마는 시그니처에서, 결과는 JSON stdout, DENY 는 종료 코드 2 + stderr 문장, 격상은 종료 코드 0 + `handle`). 8단계가 예약했던 "선언에서 도구면 생성" 의 최소형이다.
 2. **`Event.door` 에 `cli`** — 미들웨어가 없는 문이라 `manage.py world` 가 `bind_call(uuid, 'cli', actor)` 로 직접 묶는다. `ToolCall.via` 도 `cli`·`api` 를 갖는다(API 문의 호출 궤적 — 7단계 미보장 표의 첫 행이 닫힌다).
 3. **`SKILL.md` 생성기** — 도구 선언에서 스킬 문서 뼈대를 뽑는다(이름·인자·판정 규약·`request_id`·승인 핸들 사용법). 문서가 코드에서 나오면 "문서가 권한을 모른다" 는 약점이 절반은 준다.
-4. 만들지 않는다: Streamable HTTP MCP 서버(원격 클라이언트는 B 로 대신), OAuth, Tasks.
+4. **스코프 → 권한** — `ITDA['SCOPE_PERMS'] = {'orders:refund.propose': ['orders.add_refund'], …}` 표와 `Toolset.specs(actor, scopes=…, visible_only=True)`. 도구 선언의 `perm` 이 곧 스코프 매핑의 키다. OAuth 토큰 검증 자체는 만들지 않는다(fastmcp / django-oauth-toolkit).
+5. **위임 표시** — `bind_call(…, actor=사람, delegated=True)`; `ToolCall`·`Event` 에 `delegated`(bool) 한 칸. "AI 가 사람 대신" 이 장부에 남는 첫 자리.
+6. 만들지 않는다: Tasks·자체 OAuth 구현. Streamable HTTP MCP 서버는 D 실험에서 fastmcp 것을 **그대로** 쓴다(뷰 브리지를 새로 짜지 않는다).
 
 ## 6. 결론 (실측 후 채운다)
 
@@ -80,10 +110,13 @@
 | A. MCP | | | | | | | |
 | B. 스킬+HTTP | | | | | | | |
 | C. CLI | | | | | | | |
+| D. MCP 원격+OAuth | | | | | | | |
+| (인증 변주) 정적 토큰 vs OAuth | | | | | | | |
 
 ## 7. 순서 제안
 
 1. **실험 1(가장 싸다)** — itda-django 에 B(`SKILL.md` + 기존 `/api/`)와 C(`manage.py world`, Toolset 에서 생성)를 더하고 ①~⑤ 를 세 문으로 돈다. 패키지 변경은 §5-1·2 만. 관찰 표 §6 을 처음 채운다.
+1'. **실험 1'(OAuth)** — 같은 세 문을 OAuth 로. `django-oauth-toolkit` 추가, `world login`, 스코프 표. 이 실험이 6단계 이월분(대행 스코핑)을 회수한다 — 두 번째 세계보다 먼저 해도 된다.
 2. **실험 2** — 두 번째 세계 `examples/itda-hr/`(휴가 승인) 을 django-itda 두 번째 사용자로 최소 구성(모델 3·법 3·문 셋). 대행 스코핑·주입을 여기서 관찰.
 3. **실험 3** — 예약(경합) 또는 CMS(주입) 중 하나. §6 표가 도메인 축으로 늘어난다.
 4. 결론이 모이면 루트 `README.md` "무엇을 만드는가" 5번(브리지)을 이 문서의 결론으로 고쳐 쓴다.
