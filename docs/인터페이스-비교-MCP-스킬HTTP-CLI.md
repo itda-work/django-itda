@@ -96,6 +96,7 @@ OAuth 가 실험에 들어와야 하는 이유 셋: (1) 자리가 "서비스 계
 
 ## 5. django-itda 에 주는 사양 입력 (실험이 요구하는 것만)
 
+0. **CLI 문의 계약은 `../itda-django-bridge` 사이드카 계약 v1 을 그대로 쓴다**(`docs/차용-검토-itda-django-bridge.md` §1-1·2) — `{ok, version, data}` / `{ok:false, error:{kind, message, …}}`, `serve` 장수명 모드(JSON lines·`ready`·`stale`), 종료 코드 0/1/2(DENY).
 1. **`Toolset` 하나 → 문 셋** — 이미 있는 fastmcp 어댑터 옆에 `adapters/http.py`(Django 뷰 생성: 도구 이름 → `POST /tools/<name>/`, 같은 결과 모양·같은 상태 코드 규칙, Bearer 는 프로젝트의 `AUTHENTICATE`)와 `adapters/cli.py`(`manage.py world <name> --arg …` — 인자 스키마는 시그니처에서, 결과는 JSON stdout, DENY 는 종료 코드 2 + stderr 문장, 격상은 종료 코드 0 + `handle`). 8단계가 예약했던 "선언에서 도구면 생성" 의 최소형이다.
 2. **`Event.door` 에 `cli`** — 미들웨어가 없는 문이라 `manage.py world` 가 `bind_call(uuid, 'cli', actor)` 로 직접 묶는다. `ToolCall.via` 도 `cli`·`api` 를 갖는다(API 문의 호출 궤적 — 7단계 미보장 표의 첫 행이 닫힌다).
 3. **`SKILL.md` 생성기** — 도구 선언에서 스킬 문서 뼈대를 뽑는다(이름·인자·판정 규약·`request_id`·승인 핸들 사용법). 문서가 코드에서 나오면 "문서가 권한을 모른다" 는 약점이 절반은 준다.
