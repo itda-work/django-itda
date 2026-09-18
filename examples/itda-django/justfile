@@ -69,3 +69,34 @@ live-register:
     #!/usr/bin/env bash
     set -euo pipefail
     "{{ justfile_directory() }}/scripts/live_register.sh"
+
+# Postgres 실측 — 임시 컨테이너(itda-django-pg, 127.0.0.1:55433)를 띄우고 준비될 때까지 기다린다
+pg-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if docker inspect itda-django-pg >/dev/null 2>&1; then
+      docker start itda-django-pg >/dev/null
+    else
+      docker run -d --name itda-django-pg \
+        -e POSTGRES_PASSWORD=itda -e POSTGRES_USER=itda -e POSTGRES_DB=itda \
+        -p 127.0.0.1:55433:5432 postgres:17-alpine >/dev/null
+    fi
+    for _ in $(seq 1 60); do
+      if docker exec itda-django-pg pg_isready -U itda -d itda >/dev/null 2>&1; then
+        echo 'itda-django-pg 준비 완료 (127.0.0.1:55433)'; exit 0
+      fi
+      sleep 1
+    done
+    echo 'itda-django-pg 가 60초 안에 준비되지 않았다' >&2; exit 1
+
+# Postgres 실측 컨테이너를 지운다
+pg-down:
+    docker rm -f itda-django-pg
+
+# 테스트를 Postgres 로 — 예: just test-pg tests/stage_05_*.py
+test-pg *ARGS:
+    DJANGO_SETTINGS_MODULE=pg_settings PYTHONPATH=probes uv run --with 'psycopg[binary]' pytest {{ ARGS }}
+
+# Postgres 에 마이그레이션 — ledger/0002 트리거 같은 백엔드 의존을 실측한다
+migrate-pg:
+    DJANGO_SETTINGS_MODULE=pg_settings PYTHONPATH=probes uv run --with 'psycopg[binary]' python manage.py migrate --noinput
