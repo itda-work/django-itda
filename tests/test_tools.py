@@ -12,12 +12,20 @@ from django.db import OperationalError
 
 from django_itda.context import current_call
 from django_itda.models import ToolCall
-from django_itda.results import ToolBusy, ToolDenied
+from django_itda.results import CONTRACT_VERSION, ToolBusy, ToolDenied
 from django_itda.tools import Toolset
 from django_itda.verdict import Outcome, Verdict
 
 ESCALATED = Verdict(kind=Verdict.ESCALATE, rule_ids=['R-002@v1'], reason='사람에게 올린다')
 DENIED = Verdict(kind=Verdict.DENY, rule_ids=['R-001@v1'], reason='세계가 그 상태가 아니다')
+
+
+class LooseVerdict:
+    """덕 타이핑 판정 — 속성은 있는데 값이 비었다(`VerdictLike` 위반 입력)."""
+
+    kind = 'DENY'
+    rule_ids = None
+    reason = None
 
 
 @pytest.fixture
@@ -71,6 +79,11 @@ def toolset():
         return {'things': [1, 2]}
 
     @world.tool(query=True)
+    def list_impostor(actor):
+        """봉투 키와 같은 이름을 싣는 순수 조회."""
+        return {'call_id': '가짜', 'contract_version': 99, 'things': [3]}
+
+    @world.tool(query=True)
     def peek_context(actor):
         """도구 본문에서 호출 문맥을 들여다본다(v0.2)."""
         return {'context': dataclasses.asdict(current_call()) | {'actor': None}}
@@ -79,6 +92,31 @@ def toolset():
     def break_thing(actor, how: str = 'lock'):
         """터지는 도구."""
         raise OperationalError('database is locked' if how == 'lock' else 'no such table: x')
+
+    @world.tool
+    def refuse_thing(actor):
+        """본문이 자격 거부를 올리는 도구 — 사용자별 자격증명이 없다."""
+        raise ToolDenied.forbidden('kosis 의 관리자 공용 키가 설정돼 있지 않다')
+
+    @world.tool
+    def refuse_by_verdict(actor):
+        """본문이 판정 거부를 올리는 도구."""
+        raise ToolDenied(DENIED)
+
+    @world.tool(query=True)
+    def peek_refused(actor):
+        """조회 도구인데 본문이 거부를 올린다 — 결과로 접히지 않는다."""
+        raise ToolDenied.forbidden('네 자격증명이 없다')
+
+    @world.tool
+    def refuse_by_loose_verdict(actor):
+        """이 패키지의 `Verdict` 가 아닌 판정을 실어 거부를 올린다(속성 None 포함)."""
+        raise ToolDenied(LooseVerdict())
+
+    @world.tool
+    def refuse_busy(actor):
+        """본문이 직접 잠금 실패를 올리는 도구."""
+        raise ToolBusy()
 
     return world
 
@@ -184,12 +222,88 @@ def test_판정_없는_조회에는_판정_어휘를_지어내지_않는다(tool
     assert only_call().kind == ''
 
 
+def test_순수_조회의_반환값은_봉투_키를_덮어쓸_수_없다(toolset, actor):
+    result = toolset.call('list_impostor', actor)
+
+    assert result['call_id'] == only_call().call_id != '가짜'
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['things'] == [3]
+
+
+def test_판정_없는_조회에도_계약_버전이_실린다(toolset, actor):
+    result = toolset.call('list_things', actor)
+
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['call_id'] == only_call().call_id
+
+
 # --- 잠금과 고장 -------------------------------------------------------------------
 
 
 def test_잠금_실패는_ToolBusy_다(toolset, actor):
     with pytest.raises(ToolBusy) as raised:
         toolset.call('break_thing', actor, how='lock')
+
+    assert raised.value.retry_after == 1
+    row = only_call()
+    assert row.error == ToolCall.Error.BUSY
+    assert row.kind == '', '판정하지 못한 것은 판정이 아니다.'
+
+
+def test_본문이_올린_자격_거부는_forbidden_으로_남는다(toolset, actor):
+    """거부는 고장이 아니다 — 권한 검사에서 막힌 것과 같은 갈래로 남는다."""
+    with pytest.raises(ToolDenied) as raised:
+        toolset.call('refuse_thing', actor)
+
+    assert '권한 없음: kosis 의 관리자 공용 키가 설정돼 있지 않다' in str(raised.value)
+    row = only_call()
+    assert row.error == ToolCall.Error.FORBIDDEN
+    assert row.kind == '', '판정한 적이 없다.'
+    assert row.outcome == '', '결과 상태는 예외에 실려 오지 않는다 — 지어내지 않는다.'
+    assert 'kosis' in row.reason
+    assert row.actor == actor
+    assert row.via == ToolCall.Via.MCP
+    assert row.arguments == {}, '거부된 호출도 누가 어느 문으로 무엇을 시켰는지 남는다.'
+    assert current_call().call_id == '', '거부로 끝나도 호출 문맥은 풀린다.'
+
+
+def test_본문이_올린_판정_거부는_denied_로_남는다(toolset, actor):
+    with pytest.raises(ToolDenied):
+        toolset.call('refuse_by_verdict', actor)
+
+    row = only_call()
+    assert row.error == ToolCall.Error.DENIED
+    assert row.kind == Verdict.DENY
+    assert row.rule_ids == ['R-001@v1'], '판정을 들고 왔으면 규칙 ID 도 함께 남는다.'
+    assert row.reason == '세계가 그 상태가 아니다'
+    assert row.outcome == ''
+
+
+def test_덕_타이핑_판정의_빈_속성도_거부를_500_으로_바꾸지_않는다(toolset, actor):
+    """`None` 이 기록에 닿아 터지면 거부가 다른 예외로 바뀌고 궤적이 0행이 된다."""
+    with pytest.raises(ToolDenied):
+        toolset.call('refuse_by_loose_verdict', actor)
+
+    row = only_call()
+    assert row.error == ToolCall.Error.DENIED
+    assert row.kind == 'DENY'
+    assert row.reason == ''
+    assert row.rule_ids == []
+
+
+def test_조회_도구라도_본문이_올린_거부는_오류_갈래다(toolset, actor):
+    """DENY 를 **반환**하는 것과 거부를 **올리는** 것은 다른 사건이다."""
+    with pytest.raises(ToolDenied):
+        toolset.call('peek_refused', actor)
+
+    row = only_call()
+    assert row.error == ToolCall.Error.FORBIDDEN, '결과로 접히지 않는다.'
+    assert row.kind == ''
+
+
+def test_본문이_올린_잠금_실패도_busy_로_남는다(toolset, actor):
+    with pytest.raises(ToolBusy) as raised:
+        toolset.call('refuse_busy', actor)
 
     assert raised.value.retry_after == 1
     row = only_call()

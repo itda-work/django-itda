@@ -30,7 +30,7 @@ from django.utils import timezone
 from .busy import is_lock_failure
 from .context import bind_call
 from .models import ToolCall
-from .results import ToolBusy, ToolDenied, tool_result
+from .results import CONTRACT_VERSION, ToolBusy, ToolDenied, tool_result
 from .trajectory import elapsed_ms, new_call_id, record
 from .verdict import Verdict
 
@@ -146,6 +146,12 @@ class Toolset:
         - `ToolBusy` — 잠겨서 판정하지 못했다. 다시 보내면 될 요청이다.
         - 그 밖의 예외 — **그대로 올린다.** 500 은 500 이다. 모르는 고장을
           "잠시 후 다시" 로 번역하면 클라이언트는 영원히 다시 보낸다.
+
+        셋은 **어디서 판정됐든 같은 이름으로** 남는다. 여기 `spec.perm` 검사에서
+        막힌 거부와 도구 본문이 올린 거부는 같은 사건이므로 궤적에서도 같은
+        갈래여야 한다 — 한쪽만 `exception` 으로 남으면 감사 화면에서 거부가
+        500 급 고장과 섞인다. 본문이 올린 것은 기록만 하고 **그대로 다시
+        올린다**(문장·traceback·예외 종류를 바꾸지 않는다).
         """
         spec = self._specs[name]
         call_id = new_call_id()
@@ -176,6 +182,27 @@ class Toolset:
             # 다시 뒤지지 않게 하기 위해서다.
             with bind_call(call_id, via, actor):
                 returned = spec.fn(actor, **args)
+        except ToolDenied as denied:
+            # 본문이 올린 거부. 거부는 고장이 아니다 — 권한 검사에서 막힌 것과
+            # 같은 갈래로 남긴다. `query` 여부로 갈라지지 않는다: 조회 도구의
+            # DENY **반환**은 결과로 주는 것이 계약이지만, 본문이 예외를
+            # **올린 것**은 도구가 명시적으로 거부한 것이라 결과로 바꾸지 않는다.
+            record(
+                **base,
+                **self._denied_fields(denied),
+                duration_ms=elapsed_ms(started_at),
+            )
+            raise
+        except ToolBusy as busy:
+            # 본문이 직접 올린 잠금 실패. 아래 `OperationalError` 번역 갈래와
+            # 같은 사건이므로 같은 이름으로 남는다.
+            record(
+                **base,
+                error=ToolCall.Error.BUSY,
+                reason=str(busy),
+                duration_ms=elapsed_ms(started_at),
+            )
+            raise
         except OperationalError as failure:
             if not is_lock_failure(failure):
                 self._record_exception(base, started_at, failure)
@@ -194,9 +221,10 @@ class Toolset:
 
         if isinstance(returned, dict):
             # 판정 없는 순수 조회 — 물었을 뿐 세계에 아무것도 시키지 않았다.
-            # `kind`·`outcome` 을 지어내지 않는다.
+            # `kind`·`outcome` 을 지어내지 않는다. 계약 버전은 싣는다 — 이 갈래의
+            # 모양도 같은 계약의 일부다. 반환값을 먼저 펼쳐 봉투 키가 이기게 한다.
             record(**base, duration_ms=elapsed_ms(started_at))
-            return {'call_id': call_id, **returned}
+            return {**returned, 'call_id': call_id, 'contract_version': CONTRACT_VERSION}
 
         verdict, outcome_state, objects = returned
         result = tool_result(
@@ -242,8 +270,9 @@ class Toolset:
         6단계의 결제 링크: `url`·`expires_at`). 보탠 것이 자동 핸들 위에 얹히므로
         도구는 `check_tool` 도 덮어쓸 수 있다.
 
-        `pop` 인 이유 — objects 에 남으면 결과의 최상위 `handle` 을 나중에
-        덮어쓴다(`tool_result` 가 objects 를 마지막에 펼친다). 격상이 아니면
+        `pop` 인 이유 — 보탤 필드는 자동 핸들에 합쳐야 하고, 최상위 `handle` 은
+        봉투 키라 objects 에 남아 봐야 버려진다(`tool_result` 는 봉투를 나중에
+        얹는다). 격상이 아니면
         꺼내서 **버린다**. 핸들은 격상에만 있고, 기다릴 것이 없는 답에 기다리는
         방법을 실어 보내면 그건 없는 길을 알려 주는 것이다.
         """
@@ -260,6 +289,36 @@ class Toolset:
         }
         handle.update(extra or {})
         return handle
+
+    def _denied_fields(self, denied):
+        """본문이 올린 거부를 궤적 필드로 옮긴다.
+
+        판정을 들고 오지 않은 거부는 — `forbidden()` 이든 맨 `ToolDenied()` 든 —
+        판정에 닿지 않은 거부로 보고 `forbidden` 으로 남긴다. `kind` 도
+        `rule_ids` 도 적지 않는다. 판정을 들고 왔으면 DENY 반환 갈래와 **같은
+        모양**으로 남긴다.
+
+        판정의 `kind` 는 **그대로** 옮긴다. 본문이 DENY 가 아닌 판정(예:
+        ESCALATE)을 실어 올리는 것은 오용 입력이지만, 들어온 값을 지우지 않는다
+        — 지어내지도, 숨기지도 않는다.
+
+        `outcome` 은 어느 쪽이든 비운다. 결과 상태는 도구가 판정과 **함께
+        돌려주는** 것이라 예외에는 실려 오지 않는다 — 지어내면 장부가 거짓말한다.
+
+        `verdict` 는 덕 타이핑(`VerdictLike`)이라 이 패키지의 `Verdict` 가
+        아닐 수 있다. 그래서 속성이 **없거나 `None` 이어도** 빈 값으로 읽는다 —
+        `None` 이 그대로 기록에 닿으면 NOT NULL 제약으로 터져, 거부가 500 으로
+        바뀌고 궤적이 한 행도 남지 않는다.
+        """
+        verdict = denied.verdict
+        if verdict is None:
+            return {'error': ToolCall.Error.FORBIDDEN, 'reason': str(denied)}
+        return {
+            'error': ToolCall.Error.DENIED,
+            'kind': getattr(verdict, 'kind', None) or '',
+            'rule_ids': list(getattr(verdict, 'rule_ids', None) or []),
+            'reason': getattr(verdict, 'reason', None) or '',
+        }
 
     def _record_exception(self, base, started_at, failure):
         """세계가 터졌다. 판정 어휘를 적지 않는다 — 판정에 닿지 못했다."""
