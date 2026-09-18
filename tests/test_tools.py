@@ -80,6 +80,26 @@ def toolset():
         """터지는 도구."""
         raise OperationalError('database is locked' if how == 'lock' else 'no such table: x')
 
+    @world.tool
+    def refuse_thing(actor):
+        """본문이 자격 거부를 올리는 도구 — 사용자별 자격증명이 없다."""
+        raise ToolDenied.forbidden('kosis 의 관리자 공용 키가 설정돼 있지 않다')
+
+    @world.tool
+    def refuse_by_verdict(actor):
+        """본문이 판정 거부를 올리는 도구."""
+        raise ToolDenied(DENIED)
+
+    @world.tool(query=True)
+    def peek_refused(actor):
+        """조회 도구인데 본문이 거부를 올린다 — 결과로 접히지 않는다."""
+        raise ToolDenied.forbidden('네 자격증명이 없다')
+
+    @world.tool
+    def refuse_busy(actor):
+        """본문이 직접 잠금 실패를 올리는 도구."""
+        raise ToolBusy()
+
     return world
 
 
@@ -190,6 +210,51 @@ def test_판정_없는_조회에는_판정_어휘를_지어내지_않는다(tool
 def test_잠금_실패는_ToolBusy_다(toolset, actor):
     with pytest.raises(ToolBusy) as raised:
         toolset.call('break_thing', actor, how='lock')
+
+    assert raised.value.retry_after == 1
+    row = only_call()
+    assert row.error == ToolCall.Error.BUSY
+    assert row.kind == '', '판정하지 못한 것은 판정이 아니다.'
+
+
+def test_본문이_올린_자격_거부는_forbidden_으로_남는다(toolset, actor):
+    """거부는 고장이 아니다 — 권한 검사에서 막힌 것과 같은 갈래로 남는다."""
+    with pytest.raises(ToolDenied) as raised:
+        toolset.call('refuse_thing', actor)
+
+    assert '권한 없음: kosis 의 관리자 공용 키가 설정돼 있지 않다' in str(raised.value)
+    row = only_call()
+    assert row.error == ToolCall.Error.FORBIDDEN
+    assert row.kind == '', '판정한 적이 없다.'
+    assert row.outcome == '', '결과 상태는 예외에 실려 오지 않는다 — 지어내지 않는다.'
+    assert 'kosis' in row.reason
+
+
+def test_본문이_올린_판정_거부는_denied_로_남는다(toolset, actor):
+    with pytest.raises(ToolDenied):
+        toolset.call('refuse_by_verdict', actor)
+
+    row = only_call()
+    assert row.error == ToolCall.Error.DENIED
+    assert row.kind == Verdict.DENY
+    assert row.rule_ids == ['R-001@v1'], '판정을 들고 왔으면 규칙 ID 도 함께 남는다.'
+    assert row.reason == '세계가 그 상태가 아니다'
+    assert row.outcome == ''
+
+
+def test_조회_도구라도_본문이_올린_거부는_오류_갈래다(toolset, actor):
+    """DENY 를 **반환**하는 것과 거부를 **올리는** 것은 다른 사건이다."""
+    with pytest.raises(ToolDenied):
+        toolset.call('peek_refused', actor)
+
+    row = only_call()
+    assert row.error == ToolCall.Error.FORBIDDEN, '결과로 접히지 않는다.'
+    assert row.kind == ''
+
+
+def test_본문이_올린_잠금_실패도_busy_로_남는다(toolset, actor):
+    with pytest.raises(ToolBusy) as raised:
+        toolset.call('refuse_busy', actor)
 
     assert raised.value.retry_after == 1
     row = only_call()
