@@ -6,7 +6,9 @@ itda-django 5단계가 세운 법을 패키지로 옮기며 그 시험도 함께
 
 import sqlite3
 
-from django.db import OperationalError
+import pytest
+from django.contrib.auth.models import User
+from django.db import OperationalError, connection, transaction
 
 from django_itda.busy import is_lock_failure
 
@@ -52,3 +54,67 @@ def test_부분_일치로_세지_않는다():
 
 def test_OperationalError_가_아니면_잠금이_아니다():
     assert not is_lock_failure(ValueError('database is locked'))
+
+
+# --- Postgres: sqlstate ---------------------------------------------------------
+
+
+class _FakePgError(Exception):
+    """psycopg 를 임포트하지 않는다 — 판별이 읽는 것은 `sqlstate` 속성 하나다."""
+
+    def __init__(self, message, sqlstate):
+        super().__init__(message)
+        self.sqlstate = sqlstate
+
+
+def _with_sqlstate(sqlstate, message='could not obtain lock'):
+    failure = OperationalError(message)
+    failure.__cause__ = _FakePgError(message, sqlstate)
+    return failure
+
+
+@pytest.mark.parametrize('sqlstate', ['55P03', '40P01', '40001'])
+def test_PG_잠금_sqlstate_면_잠금이다(sqlstate):
+    """lock_not_available·deadlock_detected·serialization_failure — 다시 보내면 될 요청."""
+    assert is_lock_failure(_with_sqlstate(sqlstate))
+
+
+def test_PG_unique_위반은_잠금이_아니다():
+    assert not is_lock_failure(_with_sqlstate('23505', 'duplicate key value'))
+
+
+def test_PG_statement_timeout_은_잠금이_아니다():
+    """57014 는 느린 쿼리일 수 있다 — 재전송으로 번역하면 영원히 다시 보낸다."""
+    timeout = _with_sqlstate('57014', 'canceling statement due to statement timeout')
+    assert not is_lock_failure(timeout)
+
+
+def test_sqlstate_가_있으면_메시지는_보지_않는다():
+    assert not is_lock_failure(_with_sqlstate('23505', 'database is locked'))
+
+
+def test_sqlstate_가_없는_원인이면_기존_판별_그대로():
+    """원인에 `sqlstate` 가 없으면 SQLite 갈래(코드 → 메시지)로 간다."""
+    failure = OperationalError('database is locked')
+    failure.__cause__ = ValueError('sqlstate 없음')
+    assert is_lock_failure(failure)
+    assert not is_lock_failure(OperationalError('no such table: busy_orders'))
+
+
+@pytest.mark.skipif(connection.vendor != 'postgresql', reason='Postgres 실측 — just test-pg')
+@pytest.mark.django_db(transaction=True)
+def test_PG_FOR_UPDATE_NOWAIT_경합은_잠금이다():
+    """두 연결이 같은 행을 잠그려 하면 뒤쪽이 55P03 을 받는다 — 실측."""
+    user = User.objects.create(username='잠긴-행')
+    nowait = 'SELECT id FROM auth_user WHERE id = %s FOR UPDATE NOWAIT'
+    other = connection.copy()
+    try:
+        with transaction.atomic():
+            User.objects.select_for_update().get(pk=user.pk)
+            with pytest.raises(OperationalError) as raised, other.cursor() as cursor:
+                cursor.execute(nowait, [user.pk])
+    finally:
+        other.close()
+
+    assert raised.value.__cause__.sqlstate == '55P03'
+    assert is_lock_failure(raised.value)

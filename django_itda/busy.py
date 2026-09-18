@@ -23,6 +23,16 @@ busy_orders` 도 `OperationalError` 이고, 메시지에 `busy` 가 들어 있�
    확장 오류 코드는 하위 8비트에 기본 코드를 담으므로 `& 0xFF` 로 벗긴다.
 2. 코드가 없으면(다른 백엔드·주입 테스트) 알려진 **정확한 메시지**와 일치하는가.
    부분 문자열이 아니라 전체 일치다.
+
+## Postgres — `sqlstate` 로 센다
+
+psycopg 는 원인 예외에 SQLSTATE 다섯 자리를 `sqlstate` 로 싣는다. 잠금 실패로 세는
+것은 **같은 요청을 다시 보내면 통할 수 있는** 셋뿐이다 — `55P03`(lock_not_available,
+`NOWAIT`·`lock_timeout`), `40P01`(deadlock_detected), `40001`(serialization_failure).
+셋 다 트랜잭션이 통째로 물러났으니 재전송이 곧 올바른 재시도다.
+`57014`(query_canceled — `statement_timeout`)는 넣지 않는다. 잠금 대기가 아니라 **느린
+쿼리**일 수 있고, 그걸 "잠시 후 다시" 로 번역하면 같은 느린 쿼리를 영원히 다시 보낸다.
+psycopg 는 임포트하지 않는다 — 속성만 읽으므로 패키지는 드라이버를 모른 채 선다.
 """
 
 import sqlite3
@@ -41,11 +51,18 @@ BUSY_CODES = (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 # 오류 코드를 못 얻었을 때만 쓰는 대조표. 부분 일치가 아니라 전체 일치다.
 LOCK_MESSAGES = ('database is locked', 'database table is locked')
 
+# Postgres 가 "지금은 못 준다(다시 보내라)" 고 말하는 SQLSTATE 셋. 57014 는 뺐다(모듈 설명).
+LOCK_SQLSTATES = ('55P03', '40P01', '40001')
+
 
 def is_lock_failure(exception):
     """잠금 실패인가. `OperationalError` 라는 것만으로는 답이 안 된다."""
     if not isinstance(exception, OperationalError):
         return False
+    for source in (exception.__cause__, exception):
+        sqlstate = getattr(source, 'sqlstate', None)
+        if sqlstate is not None:
+            return sqlstate in LOCK_SQLSTATES
     code = getattr(exception.__cause__, 'sqlite_errorcode', None)
     if code is not None:
         return code & 0xFF in BUSY_CODES
