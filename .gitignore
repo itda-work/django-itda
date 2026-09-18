@@ -8,3 +8,5 @@ __pycache__/
 .pytest_cache/
 .env
 dist/
+# Codex 로컬 설정 — MCP 등록에 원문 토큰이 들어간다(공개 저장소)
+.codex/
