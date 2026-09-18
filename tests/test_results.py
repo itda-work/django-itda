@@ -4,7 +4,8 @@
 "상태에 따라 키가 달라지지 않는다" 를 여기서 못 박는다.
 """
 
-from django_itda.results import RESULT_KEYS, ToolBusy, ToolDenied, tool_result
+import django_itda
+from django_itda.results import CONTRACT_VERSION, RESULT_KEYS, ToolBusy, ToolDenied, tool_result
 from django_itda.verdict import Outcome, Verdict
 
 ALLOWED = Verdict(kind=Verdict.ALLOW, reason='규칙이 확정했다')
@@ -30,6 +31,39 @@ def test_세_판정이_같은_열쇠_집합을_낸다():
     ]
 
     assert [set(result) for result in results] == [set(RESULT_KEYS)] * 3
+
+
+def test_모든_판정에_계약_버전이_실린다():
+    results = [
+        tool_result(ALLOWED, Outcome.COMMITTED, call_id='a'),
+        tool_result(ESCALATED, Outcome.QUEUED, call_id='b', handle={'check_tool': 'check'}),
+        tool_result(DENIED, Outcome.NOTHING, call_id='c'),
+        tool_result(ESCALATED, Outcome.REPLAYED, call_id='d'),
+    ]
+
+    assert [result['contract_version'] for result in results] == [CONTRACT_VERSION] * 4
+    assert CONTRACT_VERSION == 1 and isinstance(CONTRACT_VERSION, int)
+
+
+def test_봉투_키는_대상_객체가_덮어쓸_수_없다():
+    result = tool_result(
+        DENIED,
+        Outcome.NOTHING,
+        call_id='c',
+        kind='ALLOW',
+        contract_version=99,
+        order={'id': 2},
+    )
+
+    assert result['kind'] == Verdict.DENY, '도구 객체가 판정을 지우면 안 된다.'
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['call_id'] == 'c'
+    assert result['order'] == {'id': 2}
+
+
+def test_계약_버전은_패키지_최상위에서_읽힌다():
+    assert django_itda.CONTRACT_VERSION == CONTRACT_VERSION
+    assert django_itda.__version__ == '0.3.0'
 
 
 def test_kind_와_outcome_은_1급이고_요약_열쇠는_없다():
