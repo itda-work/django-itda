@@ -12,3 +12,7 @@ test:
 # 예시 justfile 로 그대로 전달 — 예: just example run / just example token
 example *ARGS:
     just -f examples/itda-django/justfile -d examples/itda-django {{ ARGS }}
+
+# 패키지 테스트를 Postgres 로 — 컨테이너는 예시 쪽 `just example pg-up` 이 띄운다
+test-pg *ARGS:
+    DJANGO_SETTINGS_MODULE=tests.pg_settings uv run --with 'psycopg[binary]' pytest {{ ARGS }}
