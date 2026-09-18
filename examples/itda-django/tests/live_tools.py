@@ -13,7 +13,7 @@ from django.contrib.auth import get_user_model
 
 from agent.live.tools import toolset
 from django_itda.models import ToolCall
-from django_itda.results import ToolDenied
+from django_itda.results import CONTRACT_VERSION, ToolDenied
 from orders.models import Order, Refund
 from orders.verdict import Outcome, Verdict
 from shop.models import Product
@@ -193,6 +193,18 @@ def test_판정_없는_조회에는_판정_어휘가_없다(ai):
     numbers = {order['order_number'] for order in result['orders']}
     assert {'SEED-0001', 'SEED-0002'} <= numbers
     assert 'kind' not in result and 'outcome' not in result
+
+
+@pytest.mark.django_db
+def test_판정이_있든_없든_결과에_계약_버전이_실린다(ai):
+    """두 번째 소비자는 main 을 직접 읽는다 — 모양이 바뀌면 이 수가 먼저 말한다."""
+    order = Order.objects.get(order_number='SEED-0002')
+
+    judged = call('propose_refund', ai, order_id=order.pk, request_id='k')
+    listed = call('list_orders', ai)
+
+    assert judged['contract_version'] == CONTRACT_VERSION
+    assert listed['contract_version'] == CONTRACT_VERSION
 
 
 # --- 5. 접수 · 결제 --------------------------------------------------------------

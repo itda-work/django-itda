@@ -149,7 +149,7 @@ claude mcp add itda-world-pkg \
 | | HTTP 경로 (a) | 패키지 경로 (a') |
 |---|---|---|
 | 무엇을 보여 주나 | **LLM 은 월드 서버의 클라이언트다** 의 물증. 도구 프로세스와 세계가 물리적으로 갈라져 있다 | 도구면이 세계 안에 있어도 **판정하는 자리는 그대로** 다. 도구는 서비스 함수를 부를 뿐이다 |
-| 결과 모양 | HTTP 코드마다 조립기가 다르다. 202 에서 `kind`·`outcome` 이 떨어진다(발견 1) | **한 모양이다.** `call_id`·`kind`·`outcome`·`rule_ids`·`reason`·`alternatives`·`handle` 이 언제나 실린다 |
+| 결과 모양 | HTTP 코드마다 조립기가 다르다. 202 에서 `kind`·`outcome` 이 떨어진다(발견 1) | **한 모양이다.** `call_id`·`contract_version`·`kind`·`outcome`·`rule_ids`·`reason`·`alternatives`·`handle` 이 언제나 실린다. `contract_version`(현재 1)은 이 모양의 버전이다 — 모양이 바뀌면 올라간다 |
 | 장부 | 없다. 누가 무엇을 언제 불렀는지 아무 데도 안 남는다 | `/admin/` 의 **도구 호출** 표에 호출마다 한 행. 거부·잠금·예외도 남는다 |
 
 | 결제 요청(6단계) | 202 를 `_escalated` 가 **환불 기준으로** 조립해 `refund_id: null` · `check_tool: "check_refund"` 가 나온다. 결제 링크(`payment.url`)는 응답에 실리지 않는다 — 발견 1 의 재확인이다 | `handle` 에 `check_tool: "get_order"` 와 함께 **사람이 여는 URL**(`url`·`expires_at`)이 실린다. 도구가 `objects['handle']` 로 보탠 것이 자동 핸들 위에 병합된다(django-itda v0.1.1) |

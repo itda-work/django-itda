@@ -19,4 +19,8 @@ Django 서비스 함수가 돌려주는 `(판정, 결과)` 를 **한 모양의 �
 첫 사용자는 교육 프로젝트 itda-django 이고, 그 실접속 관찰이 이 패키지의 사양 입력이다.
 """
 
-__version__ = '0.2.0'
+from .results import CONTRACT_VERSION
+
+__all__ = ['CONTRACT_VERSION', '__version__']
+
+__version__ = '0.3.0'

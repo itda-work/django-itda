@@ -12,7 +12,7 @@ from django.db import OperationalError
 
 from django_itda.context import current_call
 from django_itda.models import ToolCall
-from django_itda.results import ToolBusy, ToolDenied
+from django_itda.results import CONTRACT_VERSION, ToolBusy, ToolDenied
 from django_itda.tools import Toolset
 from django_itda.verdict import Outcome, Verdict
 
@@ -77,6 +77,11 @@ def toolset():
     def list_things(actor):
         """판정 없는 순수 조회."""
         return {'things': [1, 2]}
+
+    @world.tool(query=True)
+    def list_impostor(actor):
+        """봉투 키와 같은 이름을 싣는 순수 조회."""
+        return {'call_id': '가짜', 'contract_version': 99, 'things': [3]}
 
     @world.tool(query=True)
     def peek_context(actor):
@@ -215,6 +220,21 @@ def test_판정_없는_조회에는_판정_어휘를_지어내지_않는다(tool
 
     assert 'kind' not in result and 'outcome' not in result
     assert only_call().kind == ''
+
+
+def test_순수_조회의_반환값은_봉투_키를_덮어쓸_수_없다(toolset, actor):
+    result = toolset.call('list_impostor', actor)
+
+    assert result['call_id'] == only_call().call_id != '가짜'
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['things'] == [3]
+
+
+def test_판정_없는_조회에도_계약_버전이_실린다(toolset, actor):
+    result = toolset.call('list_things', actor)
+
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['call_id'] == only_call().call_id
 
 
 # --- 잠금과 고장 -------------------------------------------------------------------

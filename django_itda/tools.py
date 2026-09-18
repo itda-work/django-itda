@@ -30,7 +30,7 @@ from django.utils import timezone
 from .busy import is_lock_failure
 from .context import bind_call
 from .models import ToolCall
-from .results import ToolBusy, ToolDenied, tool_result
+from .results import CONTRACT_VERSION, ToolBusy, ToolDenied, tool_result
 from .trajectory import elapsed_ms, new_call_id, record
 from .verdict import Verdict
 
@@ -221,9 +221,10 @@ class Toolset:
 
         if isinstance(returned, dict):
             # 판정 없는 순수 조회 — 물었을 뿐 세계에 아무것도 시키지 않았다.
-            # `kind`·`outcome` 을 지어내지 않는다.
+            # `kind`·`outcome` 을 지어내지 않는다. 계약 버전은 싣는다 — 이 갈래의
+            # 모양도 같은 계약의 일부다. 반환값을 먼저 펼쳐 봉투 키가 이기게 한다.
             record(**base, duration_ms=elapsed_ms(started_at))
-            return {'call_id': call_id, **returned}
+            return {**returned, 'call_id': call_id, 'contract_version': CONTRACT_VERSION}
 
         verdict, outcome_state, objects = returned
         result = tool_result(
@@ -269,8 +270,9 @@ class Toolset:
         6단계의 결제 링크: `url`·`expires_at`). 보탠 것이 자동 핸들 위에 얹히므로
         도구는 `check_tool` 도 덮어쓸 수 있다.
 
-        `pop` 인 이유 — objects 에 남으면 결과의 최상위 `handle` 을 나중에
-        덮어쓴다(`tool_result` 가 objects 를 마지막에 펼친다). 격상이 아니면
+        `pop` 인 이유 — 보탤 필드는 자동 핸들에 합쳐야 하고, 최상위 `handle` 은
+        봉투 키라 objects 에 남아 봐야 버려진다(`tool_result` 는 봉투를 나중에
+        얹는다). 격상이 아니면
         꺼내서 **버린다**. 핸들은 격상에만 있고, 기다릴 것이 없는 답에 기다리는
         방법을 실어 보내면 그건 없는 길을 알려 주는 것이다.
         """

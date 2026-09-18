@@ -31,3 +31,25 @@
 2. 4번 Postgres 프로브를 먼저 붙여 **`ledger/0002` 트리거가 PG 에서 깨지는 것**을 실측하고 vendor 분기를 넣는다 — 7단계 미보장 표의 "PostgreSQL 대응" 행이 사실로 바뀐다. 사후 변경(태그 이동 없음).
 3. 3번 쿼리 캡처를 `ToolCall` 에 붙이고 실험 1 의 지표 표에 "쿼리 동일성" 열을 더한다.
 4. 5·6·7번은 그때그때.
+
+## 5. 재검토 (2026-09-18) — 최신 git 상태 기준
+
+기준: 로컬 `main` = `origin/main`(`142bb6b`, MIT LICENSE·공개 저장소 전환) · 열린 PR #7(`fix/tooldenied-trajectory-6` — 본문이 올린 `ToolDenied`·`ToolBusy` 를 `exception` 이 아니라 `denied`/`forbidden`/`busy` 로 기록) · 브리지 저장소 무변경(`8786b45`, 계약 v1 그대로). 이 문서는 작업 트리에서 미커밋 삭제돼 있었고(원격에는 있음) 복원했다.
+
+**환경이 바뀐 것 둘.**
+- **두 번째 소비자가 생겼다** — `~/Apps/itda-work/itda-hub`(잇다 허브: 도구함=스코프 인가 서버 `django-oauth-toolkit` 3.4 · CIMD/DCR/PKCE · 별도 MCP 프로세스 · 궤적 화면). `pyproject` 가 `django-itda = { git = …, rev = "main" }` 으로 **GitHub main 을 직접** 소비한다. PR #7 이 그 라이브 실측(2026-09-18)에서 나왔다. CLAUDE.md 의 "첫 사용자가 소비하지 않는 API 는 만들지 않는다" 는 이제 소비자 둘의 교집합으로 읽어야 한다.
+- 저장소가 공개됐다. `.codex/config.toml`(Codex MCP 등록)에 `WORLD_TOKEN` 원문이 들어 있어 `.gitignore` 에 `.codex/` 를 넣었다(이 커밋). `AGENTS.md`(Codex 용 CLAUDE.md 미러, 미추적)는 `.Codex/agents/app-builder.md` 로 경로가 틀렸고(실제 `.codex/agents/app-builder.toml`) `examples/itda-django/AGENTS.md` 는 없다 — 추적 여부와 함께 마스터 결정.
+
+| # | 항목 | 재검토 결과 | 우선순위 변화 |
+|---|---|---|---|
+| 1 | 사이드카 계약 → CLI 문 | **유효.** 브리지 계약 v1 무변경. PR #7 이 `ToolCall.error` 갈래를 타입으로 확정했으므로 CLI 종료 코드 매핑(0 ALLOW·ESCALATE / 1 forbidden·busy·exception / 2 denied)이 궤적 갈래와 1:1 로 맞는다 | 그대로 1순위 |
+| 2 | `serve`·`stale` | **유효.** `manage.py mcp_stdio` 는 여전히 소스 변경을 감지하지 않는다. itda-hub 가 MCP 를 별도 프로세스로 띄우므로 `stale` 재기동은 그쪽 운영에도 그대로 쓰인다 | 상승 — 소비자 둘 |
+| 3 | 쿼리 캡처 | **유효.** `execute_wrapper` 사용처 0. PR #7 로 궤적 필드 의미가 정리된 뒤에 붙이는 것이 맞다(`query_count`·`sql_ms` 는 결과가 있는 갈래에만) | PR #7 머지 뒤 |
+| 4 | Postgres 프로브 | **유효, 더 급해졌다.** `ledger/0002` 트리거는 여전히 SQLite 문법이고 vendor 가드 없음. itda-hub 가 SQLite WAL 을 기본으로 두지만(`13cea01`) 공개 패키지가 PG 에서 migrate 가 깨지는 것은 `examples/` 문제가 아니라 **패키지 사용자 문제**가 된다 — 단, 트리거는 예시 프로젝트의 `ledger` 앱에 있고 패키지 `django_itda` 마이그레이션(`ToolCall`)에는 RunSQL 이 없다. 프로브로 둘 다 실측 | 상승 |
+| 5 | `erd`·`inspect` 도구 사용 | 유효, 변화 없음 | 그대로 |
+| 6 | 결과 봉투 `version` | **급해졌다.** `__version__ = '0.2.0'` 뿐이고 결과 dict 에 계약 버전이 없다. 소비자가 GitHub `main` 을 직접 따라오므로 결과 모양이 바뀌면 조용히 깨진다. 브리지처럼 `contract_version` 정수 + History 규율 | 상승 — 2순위로 |
+| 7 | 규율 문장 | 유효. 공개 전환에 맞춰 루트 `CLAUDE.md`/`AGENTS.md` 양쪽에 같이 | 그대로 |
+
+**면 비교 트랙(`docs/인터페이스-비교-MCP-스킬HTTP-CLI.md`)에 미치는 것** — §2-1·실험 1' 이 "`django-oauth-toolkit` 로 인가 서버를 세운다" 고 했는데, **itda-hub 가 이미 그 인가 서버**(스코프=도구함, CIMD/DCR/PKCE)다. 실험 1' 은 itda-django 에 DOT 을 넣는 대신 **itda-hub 를 인가 서버로 두고** itda-django 를 리소스 서버로 붙이는 구성이 맞다. §5-4(스코프→권한 콜러블)·§5-5(위임 표시)는 그대로 패키지 몫이고, 허브가 그 첫 소비자다. 문서 §2-1·§3 갱신은 실험 1' 사양을 쓸 때 한다.
+
+**순서 재조정**: 6(version) → 4(PG 프로브) → 1·2(CLI 문, serve/stale) → 3(캡처). PR #7 은 이 순서와 무관하게 먼저 머지한다.
