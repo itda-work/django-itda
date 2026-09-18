@@ -4,7 +4,7 @@
 > 도구 호출 하나하나가 Django의 `request.user`·permission을 1급 입력으로 받아 **ALLOW / DENY / ESCALATE** 3값으로 판정되고, ESCALATE는 사람 승인을 기다리는 핸들이 되며, 모든 호출은 Django ORM에 궤적으로 남는다.
 > 관통 논지 — **제안은 AI, 판정은 세계, 확정은 사람**(격상 건). 사람이 승인한 정책 범위는 규칙이 자동 확정한다.
 
-- 상태: 설계 단계 (2026-09-06). 첫 사용자는 같은 저장소의 교육 프로젝트 [itda-django](examples/itda-django/README.md)(`examples/itda-django/`)의 실접속 트랙. 2026-09-06 별도 저장소 `~/Apps/django-itda` 에서 이 저장소로 편입(임포트 이름 `django_itda`), 같은 날 구조 뒤집기로 패키지가 저장소 루트가 되고 교육 프로젝트가 예시로 함께 산다(uv workspace `members = ["examples/*"]`).
+- 상태: 설계 단계 (2026-09-06). 백엔드는 SQLite·PostgreSQL(프로브로 검증, [postgres-실측](docs/postgres-실측-2026-09-19.md)). 첫 사용자는 같은 저장소의 교육 프로젝트 [itda-django](examples/itda-django/README.md)(`examples/itda-django/`)의 실접속 트랙. 2026-09-06 별도 저장소 `~/Apps/django-itda` 에서 이 저장소로 편입(임포트 이름 `django_itda`), 같은 날 구조 뒤집기로 패키지가 저장소 루트가 되고 교육 프로젝트가 예시로 함께 산다(uv workspace `members = ["examples/*"]`).
 - 정본 문서: [docs/벤치마킹-MCP-생태계.md](docs/벤치마킹-MCP-생태계.md)(감쌀 것/쓸 것 결정 근거) · [docs/설계.md](docs/설계.md)
 
 ## 무엇을 만드는가 (진짜 공백 — 벤치마킹 §7.3)

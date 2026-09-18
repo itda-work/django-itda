@@ -41,6 +41,13 @@ rowcount 계약이 UPDATE 경합을 버티는가. 태그 `stage-05-*` 는 옮기
 4. **스레드 끝에서 `connection.close()`** — 안 닫으면 파일 핸들이 남아 teardown 이
    흔들린다. 예외는 삼키지 않고 종류를 결과에 남긴다. `OperationalError` 가
    섞이면 그 자체로 실패다 — **잠금 실패는 도메인 DENY 가 아니다.**
+
+## 사후 변경(2026-09-19, PG 프로브)
+
+`test_select_for_update는_SQLite에서_아무것도_잠그지_않는다` 는 SQLite 의 성질
+(`has_select_for_update = False`)을 잰다. 다른 백엔드에서는 `skipif` 로 건너뛴다.
+본문·단언은 그대로다. 짝이 되는 PostgreSQL 실측(`FOR UPDATE NOWAIT` 가 실제로 행을
+잠근다)은 채점표 밖 `tests/pg_probe.py` 에 있다.
 """
 
 import json
@@ -631,6 +638,10 @@ def test_스키마_오류는_잠금이_아니다_500(world, ai):
 
 
 @pytest.mark.django_db
+@pytest.mark.skipif(
+    connection.vendor != 'sqlite',
+    reason='이 실측은 SQLite 의 성질(select_for_update 를 무시한다)을 재는 것이다.',
+)
 def test_select_for_update는_SQLite에서_아무것도_잠그지_않는다(world):
     """`select_for_update()` 는 오류도 경고도 없이 **무시된다**.
 
