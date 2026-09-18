@@ -291,24 +291,31 @@ class Toolset:
     def _denied_fields(self, denied):
         """본문이 올린 거부를 궤적 필드로 옮긴다.
 
-        `verdict` 가 없으면 `ToolDenied.forbidden()` 이다 — 판정에 닿은 적이
-        없으니 `kind` 도 `rule_ids` 도 적지 않는다. 판정을 들고 왔으면 DENY
-        반환 갈래와 **같은 모양**으로 남긴다.
+        판정을 들고 오지 않은 거부는 — `forbidden()` 이든 맨 `ToolDenied()` 든 —
+        판정에 닿지 않은 거부로 보고 `forbidden` 으로 남긴다. `kind` 도
+        `rule_ids` 도 적지 않는다. 판정을 들고 왔으면 DENY 반환 갈래와 **같은
+        모양**으로 남긴다.
+
+        판정의 `kind` 는 **그대로** 옮긴다. 본문이 DENY 가 아닌 판정(예:
+        ESCALATE)을 실어 올리는 것은 오용 입력이지만, 들어온 값을 지우지 않는다
+        — 지어내지도, 숨기지도 않는다.
 
         `outcome` 은 어느 쪽이든 비운다. 결과 상태는 도구가 판정과 **함께
         돌려주는** 것이라 예외에는 실려 오지 않는다 — 지어내면 장부가 거짓말한다.
 
         `verdict` 는 덕 타이핑(`VerdictLike`)이라 이 패키지의 `Verdict` 가
-        아닐 수 있다. 그래서 필드를 방어적으로 읽는다.
+        아닐 수 있다. 그래서 속성이 **없거나 `None` 이어도** 빈 값으로 읽는다 —
+        `None` 이 그대로 기록에 닿으면 NOT NULL 제약으로 터져, 거부가 500 으로
+        바뀌고 궤적이 한 행도 남지 않는다.
         """
         verdict = denied.verdict
         if verdict is None:
             return {'error': ToolCall.Error.FORBIDDEN, 'reason': str(denied)}
         return {
             'error': ToolCall.Error.DENIED,
-            'kind': getattr(verdict, 'kind', ''),
+            'kind': getattr(verdict, 'kind', None) or '',
             'rule_ids': list(getattr(verdict, 'rule_ids', None) or []),
-            'reason': getattr(verdict, 'reason', ''),
+            'reason': getattr(verdict, 'reason', None) or '',
         }
 
     def _record_exception(self, base, started_at, failure):

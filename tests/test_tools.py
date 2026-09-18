@@ -20,6 +20,14 @@ ESCALATED = Verdict(kind=Verdict.ESCALATE, rule_ids=['R-002@v1'], reason='사람
 DENIED = Verdict(kind=Verdict.DENY, rule_ids=['R-001@v1'], reason='세계가 그 상태가 아니다')
 
 
+class LooseVerdict:
+    """덕 타이핑 판정 — 속성은 있는데 값이 비었다(`VerdictLike` 위반 입력)."""
+
+    kind = 'DENY'
+    rule_ids = None
+    reason = None
+
+
 @pytest.fixture
 def toolset():
     world = Toolset(name='더미-세계', instructions='안내문')
@@ -94,6 +102,11 @@ def toolset():
     def peek_refused(actor):
         """조회 도구인데 본문이 거부를 올린다 — 결과로 접히지 않는다."""
         raise ToolDenied.forbidden('네 자격증명이 없다')
+
+    @world.tool
+    def refuse_by_loose_verdict(actor):
+        """이 패키지의 `Verdict` 가 아닌 판정을 실어 거부를 올린다(속성 None 포함)."""
+        raise ToolDenied(LooseVerdict())
 
     @world.tool
     def refuse_busy(actor):
@@ -228,6 +241,10 @@ def test_본문이_올린_자격_거부는_forbidden_으로_남는다(toolset, a
     assert row.kind == '', '판정한 적이 없다.'
     assert row.outcome == '', '결과 상태는 예외에 실려 오지 않는다 — 지어내지 않는다.'
     assert 'kosis' in row.reason
+    assert row.actor == actor
+    assert row.via == ToolCall.Via.MCP
+    assert row.arguments == {}, '거부된 호출도 누가 어느 문으로 무엇을 시켰는지 남는다.'
+    assert current_call().call_id == '', '거부로 끝나도 호출 문맥은 풀린다.'
 
 
 def test_본문이_올린_판정_거부는_denied_로_남는다(toolset, actor):
@@ -240,6 +257,18 @@ def test_본문이_올린_판정_거부는_denied_로_남는다(toolset, actor):
     assert row.rule_ids == ['R-001@v1'], '판정을 들고 왔으면 규칙 ID 도 함께 남는다.'
     assert row.reason == '세계가 그 상태가 아니다'
     assert row.outcome == ''
+
+
+def test_덕_타이핑_판정의_빈_속성도_거부를_500_으로_바꾸지_않는다(toolset, actor):
+    """`None` 이 기록에 닿아 터지면 거부가 다른 예외로 바뀌고 궤적이 0행이 된다."""
+    with pytest.raises(ToolDenied):
+        toolset.call('refuse_by_loose_verdict', actor)
+
+    row = only_call()
+    assert row.error == ToolCall.Error.DENIED
+    assert row.kind == 'DENY'
+    assert row.reason == ''
+    assert row.rule_ids == []
 
 
 def test_조회_도구라도_본문이_올린_거부는_오류_갈래다(toolset, actor):
