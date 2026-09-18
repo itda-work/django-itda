@@ -30,7 +30,7 @@ from django.utils import timezone
 from .busy import is_lock_failure
 from .context import bind_call
 from .models import ToolCall
-from .results import ToolBusy, ToolDenied, tool_result
+from .results import CONTRACT_VERSION, ToolBusy, ToolDenied, tool_result
 from .trajectory import elapsed_ms, new_call_id, record
 from .verdict import Verdict
 
@@ -194,9 +194,10 @@ class Toolset:
 
         if isinstance(returned, dict):
             # 판정 없는 순수 조회 — 물었을 뿐 세계에 아무것도 시키지 않았다.
-            # `kind`·`outcome` 을 지어내지 않는다.
+            # `kind`·`outcome` 을 지어내지 않는다. 계약 버전은 싣는다 — 이 갈래의
+            # 모양도 같은 계약의 일부다.
             record(**base, duration_ms=elapsed_ms(started_at))
-            return {'call_id': call_id, **returned}
+            return {'call_id': call_id, 'contract_version': CONTRACT_VERSION, **returned}
 
         verdict, outcome_state, objects = returned
         result = tool_result(

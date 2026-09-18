@@ -8,7 +8,7 @@
 
 그래서 답의 열쇠 집합을 고정한다.
 
-    call_id · kind · outcome · rule_ids · reason · alternatives · handle
+    call_id · contract_version · kind · outcome · rule_ids · reason · alternatives · handle
     + 도구가 실은 대상 객체 (order · refund …)
 
 `kind` 와 `outcome` 은 1급 필드이고 **항상 있다**. 상태에 따라 키가 생겼다
@@ -17,13 +17,32 @@
 `decision`(escalated/settled/rejected) 같은 요약 키는 **만들지 않는다**.
 한 단어로 접어 주면 편해 보이지만, 접는 순간 `kind` 와 `outcome` 두 축이 한
 축이 된다 — "격상됐다" 는 판정이고 "큐에 올라갔다" 는 결과이며, 둘은 따로 움직인다.
+
+**계약 버전 규율** — `CONTRACT_VERSION` 은 이 모양의 버전이다. 결과 모양(최상위 키의
+추가·삭제·의미 변경)을 바꾸면 이 수를 올리고 `docs/설계.md` §4 "계약 History" 에 남긴다.
+**키 추가도 올린다** — 읽는 쪽이 "없는 것을 없다고" 읽을 수 있어야 한다. 버전이 그대로인데
+키가 늘면, 옛 버전을 아는 쪽은 새 키가 없는 답을 "아직 안 실린 것" 인지 "없는 것" 인지
+가르지 못한다. 두 번째 소비자(itda-hub)는 GitHub main 을 직접 소비하므로, 모양이 바뀌면
+조용히 깨진다 — 이 수가 그 소음을 낸다.
 """
 
 from .busy import BUSY_REASON, RETRY_AFTER
 
+# 결과 모양의 버전(정수). 올리는 규율은 모듈 docstring 참고.
+CONTRACT_VERSION = 1
+
 # `handle` 은 상태와 무관하게 늘 있는 열쇠다. ESCALATE 가 아니면 `None` 이고,
 # 그 `None` 이 "승인 대기가 아니다" 라는 답이다(키가 없는 것과는 다르다).
-RESULT_KEYS = ('call_id', 'kind', 'outcome', 'rule_ids', 'reason', 'alternatives', 'handle')
+RESULT_KEYS = (
+    'call_id',
+    'contract_version',
+    'kind',
+    'outcome',
+    'rule_ids',
+    'reason',
+    'alternatives',
+    'handle',
+)
 
 
 def tool_result(verdict, outcome_state, *, call_id, handle=None, **objects):
@@ -36,6 +55,7 @@ def tool_result(verdict, outcome_state, *, call_id, handle=None, **objects):
     payload = verdict.as_dict()
     result = {
         'call_id': call_id,
+        'contract_version': CONTRACT_VERSION,
         'kind': payload['kind'],
         'outcome': outcome_state,
         'rule_ids': list(payload.get('rule_ids') or []),

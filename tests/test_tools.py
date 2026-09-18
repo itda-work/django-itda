@@ -12,7 +12,7 @@ from django.db import OperationalError
 
 from django_itda.context import current_call
 from django_itda.models import ToolCall
-from django_itda.results import ToolBusy, ToolDenied
+from django_itda.results import CONTRACT_VERSION, ToolBusy, ToolDenied
 from django_itda.tools import Toolset
 from django_itda.verdict import Outcome, Verdict
 
@@ -182,6 +182,13 @@ def test_판정_없는_조회에는_판정_어휘를_지어내지_않는다(tool
 
     assert 'kind' not in result and 'outcome' not in result
     assert only_call().kind == ''
+
+
+def test_판정_없는_조회에도_계약_버전이_실린다(toolset, actor):
+    result = toolset.call('list_things', actor)
+
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['call_id'] == only_call().call_id
 
 
 # --- 잠금과 고장 -------------------------------------------------------------------
