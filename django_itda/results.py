@@ -53,7 +53,11 @@ def tool_result(verdict, outcome_state, *, call_id, handle=None, **objects):
     모델이 오류 없이 규칙 ID 를 읽을 수 있다.
     """
     payload = verdict.as_dict()
-    result = {
+    # 대상 객체를 **먼저** 펼치고 봉투 키를 나중에 얹는다 — 봉투가 언제나 이긴다.
+    # 도구가 우연히 `kind`·`contract_version` 같은 이름의 키를 실어도 판정과
+    # 계약 버전은 지워지지 않는다(발견 1 — 도구가 세계의 말을 지우면 안 된다).
+    return {
+        **objects,
         'call_id': call_id,
         'contract_version': CONTRACT_VERSION,
         'kind': payload['kind'],
@@ -63,8 +67,6 @@ def tool_result(verdict, outcome_state, *, call_id, handle=None, **objects):
         'alternatives': list(payload.get('alternatives') or []),
         'handle': handle,
     }
-    result.update(objects)
-    return result
 
 
 class ToolDenied(Exception):

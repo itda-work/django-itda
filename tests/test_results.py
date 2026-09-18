@@ -45,6 +45,22 @@ def test_모든_판정에_계약_버전이_실린다():
     assert CONTRACT_VERSION == 1 and isinstance(CONTRACT_VERSION, int)
 
 
+def test_봉투_키는_대상_객체가_덮어쓸_수_없다():
+    result = tool_result(
+        DENIED,
+        Outcome.NOTHING,
+        call_id='c',
+        kind='ALLOW',
+        contract_version=99,
+        order={'id': 2},
+    )
+
+    assert result['kind'] == Verdict.DENY, '도구 객체가 판정을 지우면 안 된다.'
+    assert result['contract_version'] == CONTRACT_VERSION
+    assert result['call_id'] == 'c'
+    assert result['order'] == {'id': 2}
+
+
 def test_계약_버전은_패키지_최상위에서_읽힌다():
     assert django_itda.CONTRACT_VERSION == CONTRACT_VERSION
     assert django_itda.__version__ == '0.3.0'
