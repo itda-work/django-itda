@@ -7,6 +7,11 @@
 
 이 단계는 코드를 고치지 않는다. 그래서 이 테스트는 1단계 완료 상태에서 이미 통과한다.
 새 법을 켠 것이 아니라, 이미 켜져 있던 법을 붙잡아 둔 것이다.
+
+## 사후 변경(2026-09-19, PG 프로브)
+
+`test_도메인_법은_아직_어디에도_시행되지_않는다` 는 `sqlite_master` 에서 테이블 정의 원문을
+읽는다 — SQLite 의 성질이다. 다른 백엔드에서는 `skipif` 로 건너뛴다. 본문·단언은 그대로다.
 """
 
 import pytest
@@ -194,6 +199,10 @@ def test_승인_액션은_장부에_한_줄도_남기지_않는다(world, client
 
 
 @pytest.mark.django_db
+@pytest.mark.skipif(
+    connection.vendor != 'sqlite',
+    reason='이 실측은 SQLite 의 성질(sqlite_master 에 남은 CREATE 문 원문)을 재는 것이다.',
+)
 def test_도메인_법은_아직_어디에도_시행되지_않는다(world):
     """7일·5만원은 사람이 말로 한 문장일 뿐, 코드에도 DB 에도 없다.
 

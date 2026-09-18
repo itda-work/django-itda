@@ -9,6 +9,12 @@ DB 테이블 정의에 새겨진 `CHECK ("stock" >= 0)` 이고, 그 출처는
 
 제약 위반은 트랜잭션을 깨뜨리므로 시도마다 `transaction.atomic()` 으로 감싼다.
 감싸지 않으면 뒤따르는 쿼리가 전부 TransactionManagementError 로 죽는다.
+
+## 사후 변경(2026-09-19, PG 프로브)
+
+`test_법의_원문은_테이블_정의_안에_있다` 는 `sqlite_master` 에서 테이블 정의 원문을 읽는다 —
+SQLite 의 성질이다. 다른 백엔드에서는 `skipif` 로 건너뛴다. 본문·단언은 그대로다.
+세 경로가 막히는 시험은 PostgreSQL 에서도 그대로 통과한다(같은 CHECK 가 새겨진다).
 """
 
 import pytest
@@ -67,6 +73,10 @@ def test_경로3_Django를_완전히_우회해도_막힌다(product):
 
 
 @pytest.mark.django_db
+@pytest.mark.skipif(
+    connection.vendor != 'sqlite',
+    reason='이 실측은 SQLite 의 성질(sqlite_master 에 남은 CREATE 문 원문)을 재는 것이다.',
+)
 def test_법의_원문은_테이블_정의_안에_있다(product):
     """`PositiveIntegerField` 한 단어가 마이그레이션을 타고 DB 에 새겨졌다."""
     with connection.cursor() as cursor:
