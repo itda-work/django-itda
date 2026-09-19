@@ -18,8 +18,8 @@ jobs:
   ruff:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
       - name: ruff check (루트 — 패키지와 예시를 함께 본다)
         run: uv run --no-project --with "ruff>=0.12" ruff check .
 
@@ -35,8 +35,8 @@ jobs:
       # 폐기 경고를 오류로 — 다음 Django 에서 깨질 것을 지금 잡는다.
       PYTHONWARNINGS: error::DeprecationWarning,error::PendingDeprecationWarning
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python }}
       - name: 패키지 테스트
