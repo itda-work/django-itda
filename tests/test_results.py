@@ -63,7 +63,7 @@ def test_봉투_키는_대상_객체가_덮어쓸_수_없다():
 
 def test_계약_버전은_패키지_최상위에서_읽힌다():
     assert django_itda.CONTRACT_VERSION == CONTRACT_VERSION
-    assert django_itda.__version__ == '0.3.0'
+    assert django_itda.__version__ == '0.4.0'
 
 
 def test_kind_와_outcome_은_1급이고_요약_열쇠는_없다():

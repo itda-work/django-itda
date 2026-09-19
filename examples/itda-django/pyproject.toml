@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "실행세계를 단계별로 엿보는 Django 교육용 프로젝트"
 requires-python = ">=3.12"
 dependencies = [
-    "django>=5.2,<5.3",
+    "django>=5.2,<6.2",
     # 실행세계 도구면 패키지 — 저장소 루트가 이 패키지다(../../django_itda).
     # 8단계에서 agent/live/mcp_server.py(임시)를 이 패키지의 선언으로 대체한다.
     "django-itda",

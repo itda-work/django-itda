@@ -23,4 +23,4 @@ from .results import CONTRACT_VERSION
 
 __all__ = ['CONTRACT_VERSION', '__version__']
 
-__version__ = '0.3.0'
+__version__ = '0.4.0'

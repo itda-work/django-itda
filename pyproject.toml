@@ -1,12 +1,28 @@
 [project]
 name = "django-itda"
-version = "0.3.0"
+version = "0.4.0"
 license = "MIT"
 license-files = ["LICENSE"]
 description = "Django 앱을 AI 에이전트의 판정 있는 도구면으로 노출하는 패키지"
 requires-python = ">=3.12"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
+    "Framework :: Django :: 6.1",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
-    "django>=5.2,<5.3",
+    # 하한은 5.2 LTS(다른 소비자), 상한은 검증한 최신 마이너(6.1) 다음까지.
+    "django>=5.2,<6.2",
 ]
 
 [project.optional-dependencies]

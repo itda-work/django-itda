@@ -7,6 +7,20 @@
 - 상태: 설계 단계 (2026-09-06). 백엔드는 SQLite·PostgreSQL(프로브로 검증, [postgres-실측](docs/postgres-실측-2026-09-19.md)). 첫 사용자는 같은 저장소의 교육 프로젝트 [itda-django](examples/itda-django/README.md)(`examples/itda-django/`)의 실접속 트랙. 2026-09-06 별도 저장소 `~/Apps/django-itda` 에서 이 저장소로 편입(임포트 이름 `django_itda`), 같은 날 구조 뒤집기로 패키지가 저장소 루트가 되고 교육 프로젝트가 예시로 함께 산다(uv workspace `members = ["examples/*"]`).
 - 정본 문서: [docs/벤치마킹-MCP-생태계.md](docs/벤치마킹-MCP-생태계.md)(감쌀 것/쓸 것 결정 근거) · [docs/설계.md](docs/설계.md)
 
+## 지원 버전
+
+`django>=5.2,<6.2` · `requires-python>=3.12`. 하한은 Django 5.2 LTS(다른 소비자를 위해 유지), 상한은 검증한 최신 마이너 다음까지.
+
+| Python \ Django | 5.2 LTS | 6.0 | 6.1 |
+|---|---|---|---|
+| 3.12 | CI | 지원 | CI |
+| 3.13 | 지원 | 지원 | 지원 |
+| 3.14 | CI | 지원 · 로컬 확인 | CI |
+
+- **CI** — `.github/workflows/ci.yml` 이 push·PR 마다 돈다(ruff · 패키지 테스트 · 예시 `examples/itda-django` 테스트).
+- **지원** — 의존 범위·분류자로 허용하지만 CI 매트릭스 밖. **로컬 확인**은 릴리스 때 한 번 돌렸다는 뜻.
+- PostgreSQL(psycopg 3)은 로컬 `just test-pg` 로 확인한다(CI 밖). 변경 이력은 [CHANGELOG.md](CHANGELOG.md).
+
 ## 무엇을 만드는가 (진짜 공백 — 벤치마킹 §7.3)
 
 1. **판정기** — Django User/Permission을 입력으로 하는 `Verdict(ALLOW|DENY|ESCALATE, rule_ids, reason, alternatives)` 계약과 도구 결과 매핑(DENY = 실행 오류로 모델 자기수정 가능, ESCALATE = 구조화 결과 + 승인 핸들).
