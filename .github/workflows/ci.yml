@@ -1,0 +1,61 @@
+# django-itda CI — ruff 한 번 + (Python × Django) 매트릭스로 패키지·예시 테스트.
+# 매트릭스 칸은 락(uv.lock)이 아니라 격리 환경에 Django 버전을 직접 꽂아 돈다
+# (락은 한 버전만 담으므로). 로컬 재현 명령은 docs/reports/H-1.md 와 같다.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - name: ruff check (루트 — 패키지와 예시를 함께 본다)
+        run: uv run --no-project --with "ruff>=0.12" ruff check .
+
+  test:
+    name: test (Python ${{ matrix.python }} · Django ${{ matrix.django }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
+        django: ["5.2", "6.1"]
+    env:
+      # 폐기 경고를 오류로 — 다음 Django 에서 깨질 것을 지금 잡는다.
+      PYTHONWARNINGS: error::DeprecationWarning,error::PendingDeprecationWarning
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 패키지 테스트
+        run: >-
+          uv run --isolated --no-project --python "${{ matrix.python }}"
+          --with "django~=${{ matrix.django }}.0" --with "fastmcp>=4,<5"
+          --with pytest --with pytest-django --with-editable .
+          pytest -rs
+      - name: 패키지 — 마이그레이션 누락 검사
+        env:
+          DJANGO_SETTINGS_MODULE: tests.settings
+        run: >-
+          uv run --isolated --no-project --python "${{ matrix.python }}"
+          --with "django~=${{ matrix.django }}.0" --with-editable .
+          python -m django makemigrations --check --dry-run
+      - name: 예시 테스트 (examples/itda-django)
+        working-directory: examples/itda-django
+        run: >-
+          uv run --isolated --no-project --python "${{ matrix.python }}"
+          --with "django~=${{ matrix.django }}.0" --with "fastmcp>=4,<5"
+          --with "httpx>=0.28.1" --with pytest --with pytest-django --with-editable ../..
+          pytest -rs -p no:cacheprovider
